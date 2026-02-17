@@ -1,7 +1,15 @@
-import React from 'react';
-import { Button } from './ui/button';
-import { Badge } from './ui/badge';
-import { Save, FileCheck, FileDown, ChevronDown, ArrowLeft, Camera, User } from 'lucide-react';
+import React from "react";
+import { Button } from "./ui/button";
+import { Badge } from "./ui/badge";
+import {
+  Save,
+  FileCheck,
+  FileDown,
+  ChevronDown,
+  ArrowLeft,
+  Camera,
+  User,
+} from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -9,105 +17,130 @@ import {
   DropdownMenuTrigger,
   DropdownMenuSeparator,
   DropdownMenuLabel,
-} from './ui/dropdown-menu';
-import { useSiteContext } from '../context/SiteContext';
-import { useWorkflowContext, availableUsers } from '../context/WorkflowContext';
-import { toast } from 'sonner';
-import { WorkflowStatus } from '../types/site';
+} from "./ui/dropdown-menu";
+import { useSiteContext } from "../context/SiteContext";
+import { useWorkflowContext, availableUsers } from "../context/WorkflowContext";
+import { toast } from "sonner";
+import { WorkflowStatus } from "../types/site";
 
 export const TopBar: React.FC = () => {
   const { tssrData, photos, runValidation } = useSiteContext();
-  const { currentUser, workflow, canEdit, submitForReview, approveAndForward, setCurrentUser } = useWorkflowContext();
+  const {
+    currentUser,
+    workflow,
+    canEdit,
+    submitForReview,
+    approveAndForward,
+    setCurrentUser,
+  } = useWorkflowContext();
 
   // Calculate photo completeness
   const requiredSections = [
-    'site-overview',
-    'equipment-room',
-    'cable-route',
-    'roof-mounting',
-    'power-meter',
+    "site-overview",
+    "equipment-room",
+    "cable-route",
+    "roof-mounting",
+    "power-meter",
   ];
 
   const antennaPhotos = tssrData.sectorData.reduce((count, sector) => {
-    const hasPhoto = photos.some(p => p.section === 'antenna-direction' && p.sectorId === sector.id);
+    const hasPhoto = photos.some(
+      (p) => p.section === "antenna-direction" && p.sectorId === sector.id,
+    );
     return count + (hasPhoto ? 1 : 0);
   }, 0);
 
   const otherRequiredPhotos = requiredSections.reduce((count, section) => {
-    const hasPhoto = photos.some(p => p.section === section);
+    const hasPhoto = photos.some((p) => p.section === section);
     return count + (hasPhoto ? 1 : 0);
   }, 0);
 
   const cranePhotoCount = tssrData.craneNeeded
-    ? (photos.some(p => p.section === 'crane-area') ? 1 : 0)
+    ? photos.some((p) => p.section === "crane-area")
+      ? 1
+      : 0
     : 1;
 
-  const totalRequired = tssrData.sectors + requiredSections.length + (tssrData.craneNeeded ? 1 : 0);
-  const completedRequired = antennaPhotos + otherRequiredPhotos + (tssrData.craneNeeded ? cranePhotoCount : 0);
+  const totalRequired =
+    tssrData.sectors + requiredSections.length + (tssrData.craneNeeded ? 1 : 0);
+  const completedRequired =
+    antennaPhotos +
+    otherRequiredPhotos +
+    (tssrData.craneNeeded ? cranePhotoCount : 0);
   const missingPhotos = totalRequired - completedRequired;
 
   const handleSave = () => {
-    toast.success('Draft saved', { description: 'All changes saved successfully' });
+    toast.success("Draft saved", {
+      description: "All changes saved successfully",
+    });
   };
 
   const handleValidate = () => {
     runValidation();
-    toast.info('Validation complete', { description: 'Check validation panel for results' });
+    toast.info("Validation complete", {
+      description: "Check validation panel for results",
+    });
   };
 
-  const handleExport = (type: 'tssr' | 'boq' | 'both') => {
+  const handleExport = (type: "tssr" | "boq" | "both") => {
     if (missingPhotos > 0) {
-      toast.error('Cannot export', {
-        description: `${missingPhotos} required photo(s) missing. Complete all required sections first.`
+      toast.error("Cannot export", {
+        description: `${missingPhotos} required photo(s) missing. Complete all required sections first.`,
       });
       return;
     }
-    toast.success(`Exporting ${type.toUpperCase()}`, { description: 'Download will begin shortly' });
+    toast.success(`Exporting ${type.toUpperCase()}`, {
+      description: "Download will begin shortly",
+    });
   };
 
   const handleBack = () => {
-    if (window.confirm('Return to project list? Unsaved changes will be lost.')) {
+    if (
+      window.confirm("Return to project list? Unsaved changes will be lost.")
+    ) {
       window.location.reload();
     }
   };
 
   const getStatusColor = (status: WorkflowStatus) => {
     const colors: Record<WorkflowStatus, string> = {
-      'draft': 'bg-gray-500',
-      'internal-review': 'bg-blue-500',
-      'changes-requested': 'bg-orange-500',
-      'submitted': 'bg-purple-500',
-      'rejected': 'bg-red-500',
-      'approved': 'bg-green-500',
-      'building': 'bg-teal-500',
-      'as-built-complete': 'bg-emerald-700',
+      draft: "bg-gray-500",
+      "internal-review": "bg-blue-500",
+      "changes-requested": "bg-orange-500",
+      submitted: "bg-purple-500",
+      rejected: "bg-red-500",
+      approved: "bg-green-500",
+      building: "bg-teal-500",
+      "as-built-complete": "bg-emerald-700",
     };
-    return colors[status] || 'bg-gray-500';
+    return colors[status] || "bg-gray-500";
   };
 
   const getStatusLabel = (status: WorkflowStatus) => {
     const labels: Record<WorkflowStatus, string> = {
-      'draft': 'Draft',
-      'internal-review': 'Internal Review',
-      'changes-requested': 'Changes Requested',
-      'submitted': 'Submitted',
-      'rejected': 'Rejected',
-      'approved': 'Approved',
-      'building': 'Building',
-      'as-built-complete': 'As-Built Complete',
+      draft: "Draft",
+      "internal-review": "Internal Review",
+      "changes-requested": "Changes Requested",
+      submitted: "Submitted",
+      rejected: "Rejected",
+      approved: "Approved",
+      building: "Building",
+      "as-built-complete": "As-Built Complete",
     };
     return labels[status] || status;
   };
 
   const getTimeSince = (timestamp: number | undefined) => {
-    if (!timestamp) return '';
+    if (!timestamp) return "";
     const days = Math.floor((Date.now() - timestamp) / (1000 * 60 * 60 * 24));
-    if (days === 0) return 'today';
-    if (days === 1) return '1 day';
+    if (days === 0) return "today";
+    if (days === 1) return "1 day";
     return `${days} days`;
   };
 
-  const unresolvedComments = workflow.comments.filter(c => !c.resolved).length;
+  const unresolvedComments = workflow.comments.filter(
+    (c) => !c.resolved,
+  ).length;
   const totalPhotos = photos.length;
 
   return (
@@ -133,27 +166,51 @@ export const TopBar: React.FC = () => {
           <div className="border-l pl-4 ml-2">
             <div className="flex flex-col">
               <div className="flex items-baseline gap-2">
-                <span className="text-lg font-medium">{tssrData.siteId || 'New Site'}</span>
+                <span className="text-lg font-medium">
+                  {tssrData.siteId || "New Site"}
+                </span>
                 {tssrData.siteName && (
                   <>
                     <span className="text-gray-400">&mdash;</span>
-                    <span className="text-lg font-medium">{tssrData.siteName}</span>
+                    <span className="text-lg font-medium">
+                      {tssrData.siteName}
+                    </span>
                   </>
                 )}
               </div>
-              <div className="flex items-center gap-2 text-sm text-gray-600">
-                <span className="font-mono font-semibold">{tssrData.config}</span>
-                <span>&bull;</span>
-                <span>{tssrData.sectors} Sectors</span>
-                <span>&bull;</span>
-                <span>{tssrData.size}</span>
-                <span>&bull;</span>
-                <span>{tssrData.siteCategory}</span>
-              </div>
+              {(tssrData.config || tssrData.sectors > 0) && (
+                <div className="flex items-center gap-2 text-sm text-gray-600">
+                  {tssrData.config && (
+                    <span className="font-mono font-semibold">
+                      {tssrData.config}
+                    </span>
+                  )}
+                  {tssrData.sectors > 0 && (
+                    <>
+                      {tssrData.config && <span>&bull;</span>}
+                      <span>{tssrData.sectors} Sectors</span>
+                    </>
+                  )}
+                  {tssrData.size && (
+                    <>
+                      <span>&bull;</span>
+                      <span>{tssrData.size}</span>
+                    </>
+                  )}
+                  {tssrData.siteCategory && (
+                    <>
+                      <span>&bull;</span>
+                      <span>{tssrData.siteCategory}</span>
+                    </>
+                  )}
+                </div>
+              )}
               <div className="flex items-center gap-2 text-xs mt-0.5">
                 <div className="flex items-center gap-1.5">
                   <span className="text-gray-500">Status:</span>
-                  <Badge className={`${getStatusColor(workflow.status)} text-white border-0 text-[10px] px-2 py-0.5`}>
+                  <Badge
+                    className={`${getStatusColor(workflow.status)} text-white border-0 text-[10px] px-2 py-0.5`}
+                  >
                     &#9679; {getStatusLabel(workflow.status)}
                   </Badge>
                 </div>
@@ -179,7 +236,10 @@ export const TopBar: React.FC = () => {
                         {completedRequired}/{totalRequired} photos
                       </span>
                       {missingPhotos > 0 && (
-                        <Badge variant="destructive" className="text-[10px] px-1.5 py-0 h-4">
+                        <Badge
+                          variant="destructive"
+                          className="text-[10px] px-1.5 py-0 h-4"
+                        >
                           {missingPhotos} missing
                         </Badge>
                       )}
@@ -189,8 +249,12 @@ export const TopBar: React.FC = () => {
                 {unresolvedComments > 0 && (
                   <>
                     <span className="text-gray-400">&bull;</span>
-                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 text-orange-600 border-orange-300">
-                      {unresolvedComments} comment{unresolvedComments !== 1 ? 's' : ''}
+                    <Badge
+                      variant="outline"
+                      className="text-[10px] px-1.5 py-0 h-4 text-orange-600 border-orange-300"
+                    >
+                      {unresolvedComments} comment
+                      {unresolvedComments !== 1 ? "s" : ""}
                     </Badge>
                   </>
                 )}
@@ -212,8 +276,11 @@ export const TopBar: React.FC = () => {
             <DropdownMenuContent align="end">
               <DropdownMenuLabel>Switch Role</DropdownMenuLabel>
               <DropdownMenuSeparator />
-              {Object.values(availableUsers).map(user => (
-                <DropdownMenuItem key={user.id} onClick={() => setCurrentUser(user)}>
+              {Object.values(availableUsers).map((user) => (
+                <DropdownMenuItem
+                  key={user.id}
+                  onClick={() => setCurrentUser(user)}
+                >
                   {user.name} ({user.role})
                 </DropdownMenuItem>
               ))}
@@ -221,31 +288,57 @@ export const TopBar: React.FC = () => {
           </DropdownMenu>
 
           {canEdit && (
-            <Button onClick={handleSave} variant="outline" size="sm" className="gap-2">
+            <Button
+              onClick={handleSave}
+              variant="outline"
+              size="sm"
+              className="gap-2"
+            >
               <Save className="h-4 w-4" />
               Save Draft
             </Button>
           )}
 
-          {currentUser.role === 'maker' && workflow.status === 'draft' && (
-            <Button onClick={submitForReview} variant="default" size="sm" className="gap-2">
+          {currentUser.role === "maker" && workflow.status === "draft" && (
+            <Button
+              onClick={submitForReview}
+              variant="default"
+              size="sm"
+              className="gap-2"
+            >
               Submit for Review
             </Button>
           )}
 
-          {currentUser.role === 'checker' && workflow.status === 'internal-review' && (
-            <Button onClick={approveAndForward} variant="default" size="sm" className="gap-2 bg-green-600 hover:bg-green-700">
-              Approve & Forward
-            </Button>
-          )}
+          {currentUser.role === "checker" &&
+            workflow.status === "internal-review" && (
+              <Button
+                onClick={approveAndForward}
+                variant="default"
+                size="sm"
+                className="gap-2 bg-green-600 hover:bg-green-700"
+              >
+                Approve & Forward
+              </Button>
+            )}
 
-          {currentUser.role === 'spl' && workflow.status === 'submitted' && (
-            <Button onClick={approveAndForward} variant="default" size="sm" className="gap-2 bg-green-600 hover:bg-green-700">
+          {currentUser.role === "spl" && workflow.status === "submitted" && (
+            <Button
+              onClick={approveAndForward}
+              variant="default"
+              size="sm"
+              className="gap-2 bg-green-600 hover:bg-green-700"
+            >
               Approve
             </Button>
           )}
 
-          <Button onClick={handleValidate} variant="outline" size="sm" className="gap-2">
+          <Button
+            onClick={handleValidate}
+            variant="outline"
+            size="sm"
+            className="gap-2"
+          >
             <FileCheck className="h-4 w-4" />
             Validate
           </Button>
@@ -263,15 +356,15 @@ export const TopBar: React.FC = () => {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => handleExport('tssr')}>
+              <DropdownMenuItem onClick={() => handleExport("tssr")}>
                 <FileDown className="mr-2 h-4 w-4" />
                 TSSR.docx
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => handleExport('boq')}>
+              <DropdownMenuItem onClick={() => handleExport("boq")}>
                 <FileDown className="mr-2 h-4 w-4" />
                 BOQ.xlsm
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => handleExport('both')}>
+              <DropdownMenuItem onClick={() => handleExport("both")}>
                 <FileDown className="mr-2 h-4 w-4" />
                 Both Documents
               </DropdownMenuItem>
