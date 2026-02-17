@@ -1,343 +1,249 @@
-# CLAUDE.md — Telecom Site Intelligence Platform
+# CLAUDE.md — SiteForge
 
-## Project Vision
+## What Is This
 
-An AI-powered platform for Norwegian telecom base station deployments that replaces manual TSSR (Technical Site Survey Report) and BOQ (Bill of Quantities) production with an intelligent, conversational workflow. Think Claude Code, but for telecom site planning.
+SiteForge is a documentation platform for Norwegian telecom base station deployments. It replaces manual TSSR (Technical Site Survey Report) and BOQ (Bill of Quantities) production with a live, reactive workspace.
 
-Engineers interact through a combination of structured inputs and natural language conversation. The system generates, validates, and exports operator-compliant documentation while learning from every project.
+Field engineers currently spend 4-8 hours per site manually producing TSSR/BOQ document pairs in Word and Excel. SiteForge reduces this to under 1 hour through config-driven generation, real-time dependency propagation, and AI-assisted corrections.
 
-## Target Market
+## Target Users
 
-Norwegian telecom operators and their contractors:
+Norwegian telecom subcontractors producing documentation for:
 - Telenor
-- Telia
-- ICE (Lyse Tele)
+- Telia  
+- ICE (Lyse Tele / Kjerag project)
 
-Initial user: Field engineers and contractors producing TSSR/BOQ document pairs for base station deployments.
+Primary user: field engineer (maker). Secondary: internal reviewer (checker), operator contact (SPL), electrician, builder.
+
+---
+
+## Current State
+
+### Frontend — Built (React)
+
+The frontend is a working React application with an IDE-style layout:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ TopBar: site name, status badge, workflow controls       │
+├──────────────────────────┬──────────────────────────────┤
+│ Left Panel               │ Right Panel                  │
+│                          │                              │
+│ Modes:                   │ BOQ Live View                │
+│ • Form (TSSR sections)   │ • Grouped by category        │
+│ • Photos (section sort)  │ • Change highlighting        │
+│ • Sketch (site plan)     │ • Active/all toggle          │
+│ • Preview (TSSR doc)     │ • Manual override support    │
+│                          │ • Export button               │
+├──────────────────────────┴──────────────────────────────┤
+│ Bottom Panel: Validation | Comments | AI Chat | Changes  │
+└─────────────────────────────────────────────────────────┘
+```
+
+**What works:**
+- TSSR form with collapsible sections (site identity, radio config, access, building, power)
+- Sector configuration table (azimuth, tilt, antenna, cable route per sector)
+- BOQ auto-generation from TSSR inputs with live change tracking
+- Validation engine with cross-field checks (6 rules implemented)
+- Photo upload with drag-and-drop sorting into TSSR sections
+- Sketch mode (UI shell, canvas not implemented)
+- Workflow system with role-based access (maker → checker → SPL → builder)
+- Comments panel with section targeting and thread resolution
+- Electrical sign-off and builder task checklist
+
+**What's wrong:**
+- BOQ generation is hardcoded in JavaScript (`generateBOQFromTSSR` in SiteContext.tsx)
+- Uses fake product codes and simplified categories, not the real 782-row Naun Excel catalog
+- Config string is auto-calculated from sector count only (should be direct input)
+- No backend — everything is client-side state that resets on refresh
+- No persistence, no multi-user, no real export
+
+### Backend — Not Started
+
+Planned: FastAPI + PostgreSQL + pgvector. See Architecture section.
+
+### Key Files
+
+```
+frontend/
+├── src/app/
+│   ├── components/
+│   │   ├── SiteEditor.tsx          # Main editor layout (resizable panels)
+│   │   ├── TopBar.tsx              # Status, workflow controls, export
+│   │   ├── LeftPanel.tsx           # TSSR form + mode switcher
+│   │   ├── RightPanel.tsx          # BOQ live view (grouped, animated)
+│   │   ├── BottomPanel.tsx         # Validation, chat, changes, comments
+│   │   ├── CommentsPanel.tsx       # Review comments with threads
+│   │   ├── HomeScreen.tsx          # Project list
+│   │   ├── sections/              # TSSR form sections
+│   │   │   ├── RadioConfigSection.tsx
+│   │   │   ├── SiteIdentitySection.tsx
+│   │   │   ├── AccessLogisticsSection.tsx
+│   │   │   ├── PowerGroundingSection.tsx
+│   │   │   └── BuildingInfoSection.tsx
+│   │   └── modes/                 # Left panel modes
+│   │       ├── PhotosMode.tsx      # Photo sorting into TSSR sections
+│   │       ├── SketchMode.tsx      # Site plan (shell only)
+│   │       └── PreviewMode.tsx     # TSSR document preview
+│   ├── context/
+│   │   ├── SiteContext.tsx         # Core state: TSSR data, BOQ items, photos, sketch
+│   │   └── WorkflowContext.tsx     # Roles, status, comments, reviews
+│   └── types/
+│       └── site.ts                # All TypeScript interfaces
+├── package.json                    # React 18, Vite, Tailwind v4, Radix UI, Motion
+└── vite.config.ts
+```
+
+---
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────┐
+│                 React Frontend                   │
+│  TSSR Form  |  BOQ Live View  |  AI Chat        │
+└───────────────────────┬──────────────────────────┘
+                        │ REST / WebSocket
+┌───────────────────────┴──────────────────────────┐
+│                  FastAPI Backend                  │
+│  Config Engine  |  Doc Export  |  AI Orchestrator │
+└──────────┬────────────────────────┬──────────────┘
+           │                        │
+  ┌────────┴─────────┐    ┌────────┴────────┐
+  │ PostgreSQL       │    │ Claude API      │
+  │ + pgvector       │    │ (swappable)     │
+  │                  │    └─────────────────┘
+  │ • BOQ catalog    │
+  │ • Projects       │
+  │ • Dependency rules│
+  │ • Vector search  │
+  └──────────────────┘
+```
+
+### Tech Stack
+
+| Layer | Choice | Status |
+|-------|--------|--------|
+| Frontend | React 18, Vite, Tailwind v4, Radix UI, Motion | ✅ Built |
+| Backend | FastAPI (Python) | ❌ Not started |
+| Database | PostgreSQL + pgvector | ❌ Not started |
+| AI | Claude API (abstracted via llm_service.py) | ❌ Not started |
+| Doc Export | openpyxl (BOQ .xlsx), python-docx (TSSR .docx) | ❌ Not started |
+
+### Data Flow (Target)
+
+```
+IMPORT:
+  Master BOQ .xlsx → openpyxl parse → PostgreSQL (boq_catalog table)
+
+RUNTIME:
+  TSSR field change → FastAPI → dependency engine → update project_boq_items → push to frontend
+  Manual BOQ edit → FastAPI → update with override flag → push to frontend
+
+EXPORT:
+  PostgreSQL → openpyxl writes quantities into template → .xlsx download
+  PostgreSQL → python-docx fills TSSR template → .docx download
+```
+
+### Database Schema (Planned)
+
+```
+boq_catalog          — Master template rows from Naun Excel (782 rows)
+  id, row_index, product_code, description, category, subcategory, unit, vendor, sheet_name
+
+projects             — Individual site projects
+  id, site_id, site_name, operator, status, created_at, updated_at
+
+project_tssr         — TSSR inputs per project  
+  id, project_id, config_string, sectors, site_category, cabinet_type, ...
+
+project_boq_items    — Per-project quantities (FK to catalog)
+  id, project_id, catalog_item_id, quantity, is_manual_override, override_note
+
+dependency_rules     — Maps TSSR fields to catalog items
+  id, catalog_product_code, rule_type, expression, parameters
+```
 
 ---
 
 ## Core Workflow
 
 ### Step 1 — Structured Input (No AI)
-Engineer fills a simple form:
-- **Site name** (e.g. OSL-69789)
-- **Site type** (rooftop, barn, tower, greenfield)
-- **Config string** (NMMM, NMM, NM, ULLL, UL, UM, US, NS, NSSS, NSS etc.)
-- **Owner** (Telenor, Telia, ICE)
+Engineer fills: site name, site type, config string, owner.
+System generates draft TSSR + BOQ from config rules and catalog lookup.
+Deterministic, fast, no API cost.
 
-System generates a draft TSSR structure and BOQ with pre-filled materials and quantities based on config rules and catalog lookup. Deterministic, fast, no API cost.
-
-### Step 2 — Dashboard Review
-Engineer sees TSSR and BOQ side by side on a live dashboard. Everything pre-populated from config logic. Changes in one propagate to the other through the reactive dependency graph.
+### Step 2 — Dashboard Review  
+Engineer sees TSSR and BOQ side by side. Everything pre-populated.
+Changes in one propagate to the other through dependency rules.
 
 ### Step 3 — Corrections (Two Paths)
+**Manual:** Click-to-edit UI, dropdowns, quantity fields.
+**AI chat:** "Remove the outdoor cabinet, site already has one."
+Both update same state. Both reflect live.
 
-**Manual path:** Click-to-edit UI. Change quantities, delete items, add from catalog browser. Traditional controls for engineers who prefer direct manipulation.
-
-**AI path:** Conversational interface. Engineer says:
-- "Remove the outdoor cabinet, site already has one"
-- "What rectifier options do we have for this setup?"
-- "Swap antenna bracket to heavy-duty version, 6 pieces"
-- "Walk me through the electrical scope"
-
-Both paths update the same project state. Both reflect live on the dashboard.
-
-### Step 4 — Export
-Generate final TSSR (.docx) and BOQ (.xlsx) in operator-specific format.
+### Step 4 — Review & Export
+Internal review with comments → operator submission → approval → build.
+Export final TSSR (.docx) and BOQ (.xlsx) in operator format.
 
 ---
 
-## Architecture
-
-### Tech Stack
+## Workflow System
 
 ```
-React (web)          ← Dashboard, AI chat, live BOQ/TSSR view
-FastAPI (Python)     ← Backend API, document generation, AI orchestration
-PostgreSQL + pgvector ← Material catalog, projects, AI knowledge base
-Claude API           ← AI agent (abstracted for future LLM swap)
+Draft → Internal Review → Submitted → Approved → Building → As-Built Complete
+                ↓              ↓
+         Changes Requested   Rejected
 ```
 
-### System Diagram
-
-```
-┌─────────────────────────────────────────────────┐
-│                 React Frontend                   │
-│                                                  │
-│  ┌──────────┐  ┌──────────┐  ┌───────────────┐  │
-│  │ TSSR View│  │ BOQ View │  │   AI Chat     │  │
-│  └────┬─────┘  └────┬─────┘  └───────┬───────┘  │
-│       └──────────────┴────────────────┘          │
-└───────────────────────┬──────────────────────────┘
-                        │ REST / WebSocket
-┌───────────────────────┴──────────────────────────┐
-│                  FastAPI Backend                  │
-│                                                   │
-│  ┌────────────┐ ┌──────────┐ ┌────────────────┐  │
-│  │ Config     │ │ Document │ │ AI Agent       │  │
-│  │ Engine     │ │ Export   │ │ Orchestrator   │  │
-│  └─────┬──────┘ └────┬─────┘ └───────┬────────┘  │
-│        └──────────────┴───────────────┘           │
-└───────────────┬───────────────────┬───────────────┘
-                │                   │
-    ┌───────────┴────────┐   ┌──────┴──────┐
-    │ PostgreSQL         │   │ Claude API  │
-    │ + pgvector         │   │ (swappable) │
-    │                    │   └─────────────┘
-    │ • Material catalog │
-    │ • Project state    │
-    │ • Engineer notes   │
-    │ • Vector embeddings│
-    └────────────────────┘
-```
-
-### Database: PostgreSQL + pgvector (Single DB)
-
-One database serves both relational and vector needs:
-
-**Relational** — Material catalog, project data, BOQ line items, config rules, export templates. Exact, queryable, auditable. Handles "add 6x bracket model A."
-
-**Vector (pgvector extension)** — Semantic search over item descriptions, engineer notes, usage context. Handles "what bracket works best for a barn with limited roof space?"
-
-Single source of truth. No sync problems. One deployment, one backup.
-
-### AI Agent Layer
-
-The LLM is abstracted behind a thin wrapper (`llm_service.py`) so the provider can be swapped (Claude → OpenAI or others) with minimal code change.
-
-**Per-request flow:**
-1. Frontend sends engineer's message to FastAPI
-2. FastAPI gathers context — current project state from DB, relevant catalog items (vector search if fuzzy question)
-3. FastAPI packages system prompt + context + message → sends to LLM
-4. LLM responds with conversational text, structured action, or both
-5. FastAPI executes any actions against the DB
-6. Frontend updates the dashboard
-
-**The AI does NOT come in at Step 1.** Initial template generation is pure deterministic logic. AI is an accelerator for corrections and exploration, not a dependency.
-
-### Reactive Dependency Graph
-
-Site configuration drives equipment quantities through dependency rules:
-
-```
-Config string (NMMM)
-  → Parse: 3 macro sectors
-    → 3x RRH units
-    → 3x antenna brackets
-    → fiber jumper quantities
-    → mounting hardware
-    → electrical requirements
-    → installation service items
-```
-
-Changes propagate through the graph in real-time. Remove a sector → RRH count drops, fiber count adjusts, BOQ totals update, TSSR sections reflect the change. All live on the dashboard.
-
-The graph engine runs in-memory during editing sessions. State is persisted to PostgreSQL on save.
-
----
-
-## Data Model
-
-### Material Catalog
-
-Each item in the catalog is both structured data and AI-searchable knowledge:
-
-```
-Item:
-  - item_code: "XR-400"
-  - description: "Rectifier unit 400W outdoor"
-  - category: "electrical"
-  - subcategory: "power"
-  - default_quantity_rules: {per_sector: 0, per_site: 1}
-  - compatible_site_types: [rooftop, barn]
-  - compatible_configs: [NMMM, NMM]
-  - unit_price: optional
-  - usage_context: "mostly ordered for barn sites with air antenna"  ← vector searchable
-  - engineer_notes: []  ← accumulated over time
-  - embedding: vector(1536)  ← generated from description + context
-```
-
-### Project
-
-```
-Project:
-  - id
-  - site_name: "KRS-041"
-  - site_type: "rooftop"
-  - config: "NMMM"
-  - owner: "Telenor"
-  - status: draft | review | approved | exported
-  - created_at
-  - updated_at
-```
-
-### BOQ Line Items
-
-```
-BOQItem:
-  - id
-  - project_id → Project
-  - material_id → Material Catalog
-  - section: "electrical"
-  - quantity: 6
-  - is_auto_generated: bool
-  - is_manually_overridden: bool
-  - override_note: "engineer added extra due to site conditions"
-```
+| Role | Access | Permissions |
+|------|--------|-------------|
+| Maker (field engineer) | Full editor | Create, edit all, submit |
+| Checker (senior engineer) | Review mode | Comment, approve/reject sections |
+| SPL (operator contact) | Review mode | Approve/reject submission |
+| Electrician | Power section only | Capacity check, sign-off |
+| Builder | Read-only + tasks | View approved docs, mark tasks done |
 
 ---
 
 ## Design Principles
 
-### 1. Suggestions, Not Prescriptions
-The system proposes based on what it knows. The engineer has full control to override anything. Nothing is locked. Think autocomplete, not autofill.
+1. **AI is an accelerator, not a dependency.** Config-driven generation works without AI. The platform has full value if the LLM is down.
 
-### 2. AI is an Accelerator, Not a Dependency
-Step 1 (structured generation) works without any AI. The platform has full value even if the LLM is down. AI makes it faster and smarter, but never blocks the work.
+2. **Engineer is in control.** The tool warns but never blocks. Manual overrides always allowed.
 
-### 3. Flexibility Over Rigidity
-No hardcoded "config X always means exactly these 47 items." Config rules are soft defaults. Engineers can add, remove, swap anything. Every override teaches the system.
+3. **Excel is import/export format, not runtime format.** Database is single source of truth during editing. Excel comes in at start, goes out at end.
 
-### 4. Learning From Usage
-The catalog gets smarter over time:
-- **Day one:** Import master BOQ catalog. Item codes, descriptions, categories.
-- **Phase two:** Engineers annotate items with usage context as they work.
-- **Phase three:** System recognizes patterns across projects automatically.
+4. **Two control modes, one state.** Manual UI and AI chat both modify the same project state.
 
-### 5. Two Control Modes, One State
-Manual UI controls and AI chat both modify the same project state. Engineer can switch between them freely. Some prefer clicking, some prefer talking. Both are first-class.
+5. **IDE, not wizard.** Everything accessible at once. No forced step-by-step flow.
 
 ---
 
 ## Development Phases
 
-### Phase 1 — Foundation
-- [ ] PostgreSQL + pgvector setup
-- [ ] Material catalog schema and import from existing BOQ templates
-- [ ] FastAPI project scaffold with basic CRUD endpoints
-- [ ] Config parsing logic (config string → default material list)
-- [ ] Simple React frontend with input form and BOQ table view
-- [ ] Document export (TSSR .docx, BOQ .xlsx)
+### Phase 1 — Backend Foundation ← CURRENT
+- [ ] PostgreSQL setup + BOQ catalog import from real Excel
+- [ ] Dependency rules engine (config → quantities)
+- [ ] FastAPI endpoints (project CRUD, TSSR update, BOQ serve/export)
+- [ ] Connect frontend to backend (replace hardcoded generation)
+- [ ] Fix config string to be direct input, not auto-calculated
 
-**Outcome:** Engineer fills form → gets pre-filled BOQ → manually edits → exports documents.
+### Phase 2 — Complete Frontend
+- [ ] Sketch mode: equipment placement on photo/map overlay
+- [ ] Photo annotations: SVG overlay with arrows, circles, measurements
+- [ ] TSSR document export (.docx)
+- [ ] Real Excel export matching Naun template structure
 
-### Phase 2 — AI Layer
+### Phase 3 — AI Layer
 - [ ] LLM service wrapper (Claude API, swappable)
 - [ ] System prompt with telecom domain knowledge
-- [ ] Context injection (project state + catalog) per request
-- [ ] Structured action parsing from LLM responses
-- [ ] Chat interface in React frontend
-- [ ] Vector embeddings for catalog items (pgvector)
-- [ ] Semantic search for material recommendations
+- [ ] Context injection (project state + catalog per request)
+- [ ] Chat interface connected to real actions
+- [ ] Vector embeddings for catalog semantic search (pgvector)
 
-**Outcome:** Engineer can converse with AI to modify BOQ, get material suggestions, ask questions about the project.
-
-### Phase 3 — Intelligence
-- [ ] Usage context accumulation from completed projects
-- [ ] Pattern recognition across similar sites
-- [ ] "Sites like this usually need X" suggestions
-- [ ] Engineer notes and annotations stored as searchable knowledge
-- [ ] Validation warnings ("you removed the cabinet but kept the mounting kit")
-
-**Outcome:** System gets smarter with every project completed.
-
-### Phase 4 — Scale
-- [ ] Multi-operator template support (Telenor vs Telia vs ICE formats)
-- [ ] Multi-user access and project sharing
-- [ ] Mobile-friendly view for on-site review
-- [ ] API for integration with operator systems
-- [ ] Dashboard analytics across projects
-
-**Outcome:** Platform ready for the broader Norwegian telecom market.
-
----
-
-## Key Technical Decisions
-
-| Decision | Choice | Rationale |
-|---|---|---|
-| Database | PostgreSQL + pgvector | Single DB for relational + vector. No sync issues. Sufficient scale for years. |
-| Backend | FastAPI (Python) | Same ecosystem as document generation libs (python-docx, openpyxl), Claude SDK, pgvector. Async support. |
-| Frontend | React (web) | Desktop-first experience. Split panel dashboard. No app store dependency. |
-| AI Provider | Claude API (abstracted) | Swappable to OpenAI or others via thin wrapper. No vendor lock-in. |
-| Document Gen | python-docx + openpyxl | Direct programmatic control over TSSR/BOQ output formats. |
-| Deployment | TBD | Docker Compose for dev. Cloud deployment TBD based on scale needs. |
-
----
-
-## Config String Reference
-
-```
-N = Nokia vendor
-M = Macro sector
-m = Micro sector (if applicable)
-
-NMMM  = Nokia, 3 macro sectors
-NMM   = Nokia, 2 macro sectors
-NM    = Nokia, 1 macro sector
-
-Each macro sector typically requires:
-  - 1x RRH unit
-  - 1x Antenna + bracket
-  - Fiber jumpers (quantity varies by setup)
-  - Mounting hardware
-  - Associated installation service items
-```
-
-*Config parsing rules are soft defaults, not hard constraints.*
-
----
-
-## File Structure (Planned)
-
-```
-site-forge/
-├── backend/
-│   ├── main.py                 # FastAPI app entry
-│   ├── config.py               # Environment config
-│   ├── models/                 # SQLAlchemy / DB models
-│   │   ├── project.py
-│   │   ├── material.py
-│   │   └── boq_item.py
-│   ├── routers/                # API endpoints
-│   │   ├── projects.py
-│   │   ├── materials.py
-│   │   ├── boq.py
-│   │   ├── export.py
-│   │   └── chat.py
-│   ├── services/
-│   │   ├── llm_service.py      # AI wrapper (swappable)
-│   │   ├── config_engine.py    # Config → material defaults
-│   │   ├── graph_engine.py     # Reactive dependency propagation
-│   │   └── export_service.py   # TSSR/BOQ document generation
-│   ├── catalog/                # Seed data
-│   │   └── master_boq.json
-│   └── requirements.txt
-├── frontend/
-│   ├── src/
-│   │   ├── components/
-│   │   │   ├── Dashboard.jsx
-│   │   │   ├── TSSRView.jsx
-│   │   │   ├── BOQView.jsx
-│   │   │   ├── ChatPanel.jsx
-│   │   │   ├── SiteForm.jsx
-│   │   │   └── CatalogBrowser.jsx
-│   │   ├── hooks/
-│   │   ├── services/
-│   │   └── App.jsx
-│   └── package.json
-├── docker-compose.yml
-├── CLAUDE.md                    # This file
-└── README.md
-```
-
----
-
-## Open Questions
-
-- Exact TSSR section hierarchy per operator — need to map from real documents
-- BOQ master catalog import format — parse from existing .xlsx templates
-- Hosting/deployment strategy — self-hosted vs cloud
-- Authentication — needed for multi-user, not for solo MVP
-- Pricing model — per document pair, subscription, or per-seat
+### Phase 4 — Intelligence & Scale
+- [ ] Multi-operator template support (Telenor vs Telia vs ICE)
+- [ ] Pattern recognition across projects
+- [ ] Multi-user with auth
+- [ ] Mobile view for on-site review
