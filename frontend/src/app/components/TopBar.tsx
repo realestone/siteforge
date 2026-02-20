@@ -1,13 +1,11 @@
 import React from "react";
-import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import {
   Save,
-  FileCheck,
   FileDown,
+  SendHorizonal,
+  CheckCircle,
   ChevronDown,
-  ArrowLeft,
-  Camera,
   User,
 } from "lucide-react";
 import {
@@ -21,10 +19,28 @@ import {
 import { useSiteContext } from "../context/SiteContext";
 import { useWorkflowContext, availableUsers } from "../context/WorkflowContext";
 import { toast } from "sonner";
+import { exportBOQTemplate, exportTSSRTemplate } from "../api/client";
 import { WorkflowStatus } from "../types/site";
 
+const InfoField: React.FC<{
+  label: string;
+  value?: string;
+  placeholder: string;
+}> = ({ label, value, placeholder }) => (
+  <div className="flex flex-col">
+    <span className="text-[11px] font-medium text-gray-500 uppercase leading-tight">
+      {label}
+    </span>
+    <span
+      className={`text-sm font-semibold leading-tight ${value ? "text-gray-900" : "text-gray-400"}`}
+    >
+      {value || placeholder}
+    </span>
+  </div>
+);
+
 export const TopBar: React.FC = () => {
-  const { tssrData, photos, runValidation } = useSiteContext();
+  const { tssrData, boqItems, projectId } = useSiteContext();
   const {
     currentUser,
     workflow,
@@ -34,71 +50,46 @@ export const TopBar: React.FC = () => {
     setCurrentUser,
   } = useWorkflowContext();
 
-  // Calculate photo completeness
-  const requiredSections = [
-    "site-overview",
-    "equipment-room",
-    "cable-route",
-    "roof-mounting",
-    "power-meter",
-  ];
-
-  const antennaPhotos = tssrData.sectorData.reduce((count, sector) => {
-    const hasPhoto = photos.some(
-      (p) => p.section === "antenna-direction" && p.sectorId === sector.id,
-    );
-    return count + (hasPhoto ? 1 : 0);
-  }, 0);
-
-  const otherRequiredPhotos = requiredSections.reduce((count, section) => {
-    const hasPhoto = photos.some((p) => p.section === section);
-    return count + (hasPhoto ? 1 : 0);
-  }, 0);
-
-  const cranePhotoCount = tssrData.craneNeeded
-    ? photos.some((p) => p.section === "crane-area")
-      ? 1
-      : 0
-    : 1;
-
-  const totalRequired =
-    tssrData.sectors + requiredSections.length + (tssrData.craneNeeded ? 1 : 0);
-  const completedRequired =
-    antennaPhotos +
-    otherRequiredPhotos +
-    (tssrData.craneNeeded ? cranePhotoCount : 0);
-  const missingPhotos = totalRequired - completedRequired;
-
   const handleSave = () => {
     toast.success("Draft saved", {
       description: "All changes saved successfully",
     });
   };
 
-  const handleValidate = () => {
-    runValidation();
-    toast.info("Validation complete", {
-      description: "Check validation panel for results",
-    });
-  };
-
-  const handleExport = (type: "tssr" | "boq" | "both") => {
-    if (missingPhotos > 0) {
-      toast.error("Cannot export", {
-        description: `${missingPhotos} required photo(s) missing. Complete all required sections first.`,
-      });
-      return;
+  const handleExport = async (
+    type: "tssr" | "tssr-modern" | "boq" | "both",
+  ) => {
+    if (type === "tssr" || type === "tssr-modern" || type === "both") {
+      if (!projectId) {
+        toast.warning("No project loaded");
+        return;
+      }
+      const format = type === "tssr-modern" ? "modern" : "legacy";
+      try {
+        await exportTSSRTemplate(projectId, format);
+        toast.success("TSSR exported", {
+          description:
+            format === "modern"
+              ? "Modern template generated and downloaded"
+              : "Template filled with project data and downloaded",
+        });
+      } catch {
+        toast.error("TSSR export failed");
+      }
     }
-    toast.success(`Exporting ${type.toUpperCase()}`, {
-      description: "Download will begin shortly",
-    });
-  };
-
-  const handleBack = () => {
-    if (
-      window.confirm("Return to project list? Unsaved changes will be lost.")
-    ) {
-      window.location.reload();
+    if (type === "boq" || type === "both") {
+      if (!projectId) {
+        toast.warning("No project loaded");
+        return;
+      }
+      try {
+        await exportBOQTemplate(projectId);
+        toast.success("BOQ exported", {
+          description: "Template filled with quantities and downloaded",
+        });
+      } catch {
+        toast.error("BOQ export failed");
+      }
     }
   };
 
@@ -138,140 +129,101 @@ export const TopBar: React.FC = () => {
     return `${days} days`;
   };
 
-  const unresolvedComments = workflow.comments.filter(
-    (c) => !c.resolved,
-  ).length;
-  const totalPhotos = photos.length;
-
   return (
-    <div className="border-b bg-white px-6 py-3">
-      <div className="flex items-start justify-between">
+    <div className="border-b border-gray-200 bg-white px-6 py-3">
+      <div className="flex items-center justify-between">
+        {/* Left: Logo + Project Info + Status */}
         <div className="flex items-center gap-4">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleBack}
-            className="gap-2 -ml-2"
-          >
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
+          {/* Logo / Branding */}
+          <span className="text-xl font-bold text-gray-900">SiteForge</span>
 
-          <div className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded bg-teal-600 text-white font-bold">
-              &#9670;
-            </div>
-            <span className="text-lg font-semibold">SiteForge</span>
+          {/* Divider */}
+          <div className="h-8 w-px bg-gray-200" />
+
+          {/* Project Info Fields */}
+          <div className="flex items-center gap-4">
+            <InfoField
+              label="Project"
+              value={tssrData.siteName}
+              placeholder="Untitled Project"
+            />
+            <InfoField
+              label="Site ID"
+              value={tssrData.siteId}
+              placeholder="—"
+            />
+            <InfoField
+              label="Owner"
+              value={tssrData.landlordName}
+              placeholder="—"
+            />
+            <InfoField
+              label="Customer"
+              value={tssrData.operator}
+              placeholder="—"
+            />
+            <InfoField label="Config" value={tssrData.config} placeholder="—" />
+            <InfoField label="Version" value="1.0" placeholder="—" />
           </div>
 
-          <div className="border-l pl-4 ml-2">
-            <div className="flex flex-col">
-              <div className="flex items-baseline gap-2">
-                <span className="text-lg font-medium">
-                  {tssrData.siteId || "New Site"}
-                </span>
-                {tssrData.siteName && (
-                  <>
-                    <span className="text-gray-400">&mdash;</span>
-                    <span className="text-lg font-medium">
-                      {tssrData.siteName}
-                    </span>
-                  </>
-                )}
-              </div>
-              {(tssrData.config || tssrData.sectors > 0) && (
-                <div className="flex items-center gap-2 text-sm text-gray-600">
-                  {tssrData.config && (
-                    <span className="font-mono font-semibold">
-                      {tssrData.config}
-                    </span>
-                  )}
-                  {tssrData.sectors > 0 && (
-                    <>
-                      {tssrData.config && <span>&bull;</span>}
-                      <span>{tssrData.sectors} Sectors</span>
-                    </>
-                  )}
-                  {tssrData.size && (
-                    <>
-                      <span>&bull;</span>
-                      <span>{tssrData.size}</span>
-                    </>
-                  )}
-                  {tssrData.siteCategory && (
-                    <>
-                      <span>&bull;</span>
-                      <span>{tssrData.siteCategory}</span>
-                    </>
-                  )}
-                </div>
-              )}
-              <div className="flex items-center gap-2 text-xs mt-0.5">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-gray-500">Status:</span>
-                  <Badge
-                    className={`${getStatusColor(workflow.status)} text-white border-0 text-[10px] px-2 py-0.5`}
-                  >
-                    &#9679; {getStatusLabel(workflow.status)}
-                  </Badge>
-                </div>
-                {workflow.assignedTo && (
-                  <>
-                    <span className="text-gray-400">&bull;</span>
-                    <span className="text-gray-600">
-                      Assigned to: {workflow.assignedTo.name}
-                    </span>
-                    {workflow.assignedAt && (
-                      <span className="text-gray-500">
-                        ({getTimeSince(workflow.assignedAt)})
-                      </span>
-                    )}
-                  </>
-                )}
-                {totalPhotos > 0 && (
-                  <>
-                    <span className="text-gray-400">&bull;</span>
-                    <div className="flex items-center gap-1.5">
-                      <Camera className="h-3.5 w-3.5 text-gray-500" />
-                      <span className="text-gray-600">
-                        {completedRequired}/{totalRequired} photos
-                      </span>
-                      {missingPhotos > 0 && (
-                        <Badge
-                          variant="destructive"
-                          className="text-[10px] px-1.5 py-0 h-4"
-                        >
-                          {missingPhotos} missing
-                        </Badge>
-                      )}
-                    </div>
-                  </>
-                )}
-                {unresolvedComments > 0 && (
-                  <>
-                    <span className="text-gray-400">&bull;</span>
-                    <Badge
-                      variant="outline"
-                      className="text-[10px] px-1.5 py-0 h-4 text-orange-600 border-orange-300"
-                    >
-                      {unresolvedComments} comment
-                      {unresolvedComments !== 1 ? "s" : ""}
-                    </Badge>
-                  </>
-                )}
-              </div>
+          {/* Divider */}
+          <div className="h-8 w-px bg-gray-200" />
+
+          {/* Existing status info */}
+          <div className="flex items-center gap-2 text-xs">
+            <div className="flex items-center gap-1.5">
+              <span className="text-gray-500">Status:</span>
+              <Badge
+                className={`${getStatusColor(workflow.status)} text-white border-0 text-[10px] px-2 py-0.5`}
+              >
+                &#9679; {getStatusLabel(workflow.status)}
+              </Badge>
             </div>
+            {workflow.assignedTo && (
+              <>
+                <span className="text-gray-400">&bull;</span>
+                <span className="text-gray-600">
+                  Assigned to: {workflow.assignedTo.name}
+                </span>
+                {workflow.assignedAt && (
+                  <span className="text-gray-500">
+                    ({getTimeSince(workflow.assignedAt)})
+                  </span>
+                )}
+              </>
+            )}
+            {tssrData.config && (
+              <>
+                <span className="text-gray-400">&bull;</span>
+                <span className="font-mono font-semibold text-gray-600">
+                  {tssrData.config}
+                </span>
+              </>
+            )}
+            {tssrData.sectors > 0 && (
+              <>
+                <span className="text-gray-400">&bull;</span>
+                <span className="text-gray-600">
+                  {tssrData.sectors} Sectors
+                </span>
+              </>
+            )}
           </div>
         </div>
 
+        {/* Right: Action Buttons */}
         <div className="flex items-center gap-2">
           {/* Role switcher */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="gap-2">
+              <button className="inline-flex items-center gap-2 h-9 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
                 <User className="h-3.5 w-3.5" />
                 {currentUser.name}
+                <span className="text-xs text-gray-500">
+                  ({currentUser.role})
+                </span>
                 <ChevronDown className="h-3 w-3" />
-              </Button>
+              </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuLabel>Switch Role</DropdownMenuLabel>
@@ -287,89 +239,81 @@ export const TopBar: React.FC = () => {
             </DropdownMenuContent>
           </DropdownMenu>
 
+          {/* Save */}
           {canEdit && (
-            <Button
+            <button
               onClick={handleSave}
-              variant="outline"
-              size="sm"
-              className="gap-2"
+              className="inline-flex items-center gap-2 h-9 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
             >
               <Save className="h-4 w-4" />
-              Save Draft
-            </Button>
+              Save
+            </button>
           )}
 
-          {currentUser.role === "maker" && workflow.status === "draft" && (
-            <Button
-              onClick={submitForReview}
-              variant="default"
-              size="sm"
-              className="gap-2"
-            >
-              Submit for Review
-            </Button>
-          )}
-
-          {currentUser.role === "checker" &&
-            workflow.status === "internal-review" && (
-              <Button
-                onClick={approveAndForward}
-                variant="default"
-                size="sm"
-                className="gap-2 bg-green-600 hover:bg-green-700"
-              >
-                Approve & Forward
-              </Button>
-            )}
-
-          {currentUser.role === "spl" && workflow.status === "submitted" && (
-            <Button
-              onClick={approveAndForward}
-              variant="default"
-              size="sm"
-              className="gap-2 bg-green-600 hover:bg-green-700"
-            >
-              Approve
-            </Button>
-          )}
-
-          <Button
-            onClick={handleValidate}
-            variant="outline"
-            size="sm"
-            className="gap-2"
-          >
-            <FileCheck className="h-4 w-4" />
-            Validate
-          </Button>
-
+          {/* Export */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button
-                size="sm"
-                className="gap-2 bg-teal-600 hover:bg-teal-700"
-                disabled={missingPhotos > 0}
-              >
+              <button className="inline-flex items-center gap-2 h-9 px-4 py-2 text-sm font-medium text-green-600 bg-green-50 border border-green-500 rounded-lg hover:bg-green-100 transition-colors">
                 <FileDown className="h-4 w-4" />
                 Export
                 <ChevronDown className="h-3 w-3" />
-              </Button>
+              </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              <DropdownMenuLabel>TSSR</DropdownMenuLabel>
               <DropdownMenuItem onClick={() => handleExport("tssr")}>
                 <FileDown className="mr-2 h-4 w-4" />
-                TSSR.docx
+                TSSR (OneCo Template)
               </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handleExport("tssr-modern")}>
+                <FileDown className="mr-2 h-4 w-4" />
+                TSSR (Modern)
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>BOQ</DropdownMenuLabel>
               <DropdownMenuItem onClick={() => handleExport("boq")}>
                 <FileDown className="mr-2 h-4 w-4" />
                 BOQ.xlsm
               </DropdownMenuItem>
+              <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => handleExport("both")}>
                 <FileDown className="mr-2 h-4 w-4" />
-                Both Documents
+                Both (Legacy TSSR + BOQ)
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+
+          {/* Submit / Approve */}
+          {currentUser.role === "maker" && workflow.status === "draft" && (
+            <button
+              onClick={submitForReview}
+              className="inline-flex items-center gap-2 h-9 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 hover:shadow-sm transition-all"
+            >
+              <SendHorizonal className="h-4 w-4" />
+              Submit
+            </button>
+          )}
+
+          {currentUser.role === "checker" &&
+            workflow.status === "internal-review" && (
+              <button
+                onClick={approveAndForward}
+                className="inline-flex items-center gap-2 h-9 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 hover:shadow-sm transition-all"
+              >
+                <CheckCircle className="h-4 w-4" />
+                Approve & Forward
+              </button>
+            )}
+
+          {currentUser.role === "spl" && workflow.status === "submitted" && (
+            <button
+              onClick={approveAndForward}
+              className="inline-flex items-center gap-2 h-9 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 hover:shadow-sm transition-all"
+            >
+              <CheckCircle className="h-4 w-4" />
+              Approve
+            </button>
+          )}
         </div>
       </div>
     </div>

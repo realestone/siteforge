@@ -3,9 +3,9 @@ export interface Site {
   name: string;
   config: string;
   sectors: number;
-  size: 'Small' | 'Medium' | 'Large';
-  category: 'Rooftop' | 'Tower' | 'Indoor' | 'Barn';
-  status: 'New' | 'Draft' | 'Complete' | 'Warning';
+  size: "Small" | "Medium" | "Large";
+  category: "Rooftop" | "Tower" | "Indoor" | "Barn";
+  status: "New" | "Draft" | "Complete" | "Warning";
   warningCount?: number;
   lastModified: string;
 }
@@ -15,32 +15,40 @@ export interface SectorData {
   azimuth: number;
   mTilt: number;
   eTilt: number;
-  antenna: string;
+  antennas: string[];
   cableRoute?: number;
 }
 
+export type CatalogSection = "product" | "service" | "griptel" | "solar";
+
 export interface BOQItem {
   id: string;
-  category: string;
-  name: string;
+  catalogItemId?: string | null;
+  section?: CatalogSection | null;
+
+  // Catalog fields (from backend join)
   productCode: string;
+  description: string;
+  comments?: string | null;
+  orderingHints?: string | null;
+  productCategory: string;
+  productSubcategory?: string | null;
+  vendor?: string | null;
+
+  // Per-project fields
   quantity: number;
-  unit: string;
-  rule?: string;
-  source?: string;
-  comment?: string;
+  ruleApplied?: string | null;
   isManualOverride?: boolean;
+  overrideNote?: string | null;
+
+  // Excel anchor (for export)
+  rowIndex?: number | null;
+  sheetName?: string | null;
+
+  // UI-only transient state
   previousQuantity?: number;
   isNew?: boolean;
   timestamp?: number;
-}
-
-export interface ValidationResult {
-  id: string;
-  type: 'error' | 'warning' | 'success';
-  code: string;
-  message: string;
-  fields?: string[];
 }
 
 export interface ChangeLogEntry {
@@ -50,50 +58,92 @@ export interface ChangeLogEntry {
   itemsChanged: number;
 }
 
+export interface RevisionEntry {
+  id: string;
+  rev: string;
+  nr: number;
+  name: string;
+  company: string;
+  type: string;
+  date: string;
+}
+
+export interface RadioPlanFile {
+  fileName: string;
+  fileSize: number;
+  uploadedAt: number;
+  parsed: boolean;
+  siteId?: string;
+  project?: string;
+  config?: string;
+  sectorCount?: number;
+  totalCells?: number;
+}
+
+export interface PowerCalcFile {
+  fileName: string;
+  fileSize: number;
+  uploadedAt: number;
+  parsed: boolean;
+  siteId?: string;
+  siteName?: string;
+  stationOwner?: string;
+  engineer?: string;
+  totalNormalPowerW?: number;
+  maxPower80W?: number;
+  rectifierModules?: number;
+  batteryStrings2h?: number;
+  rectifierOk?: boolean;
+}
+
 export interface TSSRData {
+  // Radio Plan
+  radioPlanFile: RadioPlanFile | null;
+
+  // Power Calculator
+  powerCalcFile: PowerCalcFile | null;
+
   // Site Identity
   siteId: string;
   siteName: string;
   operator: string;
-  
+  siteModel: string;
+  siteType: string;
+  customer: string;
+  siteOwner: string;
+
+  // Supporting Documents
+  siteOwnerOffer: string;
+  montasjeunderlag: string;
+  sart: string;
+  veiviser: string;
+  rfsrRnp: string;
+  guidelineVersion: string;
+
+  // Access Info
+  veiviserComments: string;
+  iloqRequired: boolean;
+  iloqDetails: string;
+
+  // TSSR Alignment
+  tssrAlignment: string;
+  tssrAlignmentComments: string;
+
   // Radio Configuration
   sectors: number;
-  size: 'Small' | 'Medium' | 'Large';
+  size: "Small" | "Medium" | "Large";
   config: string;
   sectorData: SectorData[];
-  
+
   // Access & Logistics
-  siteCategory: 'Rooftop' | 'Tower' | 'Indoor' | 'Barn';
+  siteCategory: "Rooftop" | "Tower" | "Indoor" | "Barn";
   landlordName: string;
   accessInstructions: string;
   craneNeeded: boolean;
-  
-  // Cabinet & Power
-  cabinetType: 'Indoor' | 'Outdoor';
-  acdb: string;
-  rectifier: string;
-  earthing: string;
-  
-  // HSE
-  hseHazards: string[];
-  
-  // Building Info
-  roofType?: string;
-  roofMaterial?: string;
-  roofLoad?: number;
-  towerHeight?: number;
-  
-  // Cable Routing
-  cableLadderLength?: number;
-  verticalCableRoute?: number;
-  
-  // Antenna Mounting
-  mountType: string;
-  
-  // Services
-  paintingRequired: boolean;
-  paintingColor?: string;
-  
+
+  // Revision History
+  revisionHistory: RevisionEntry[];
+
   // Other
   additionalNotes: string;
 }
@@ -102,8 +152,8 @@ export interface TSSRData {
 
 export interface Annotation {
   id: string;
-  type: 'arrow' | 'circle' | 'rectangle' | 'text' | 'line' | 'measure';
-  color: 'red' | 'yellow' | 'blue' | 'white' | 'black';
+  type: "arrow" | "circle" | "rectangle" | "text" | "line" | "measure";
+  color: "red" | "yellow" | "blue" | "white" | "black";
   points: { x: number; y: number }[]; // Start/end for arrows/lines, corners for shapes
   label?: string;
   measureDistance?: number; // For measure tool
@@ -122,16 +172,16 @@ export interface Photo {
 }
 
 export type PhotoSection =
-  | 'unsorted'
-  | 'site-overview'
-  | 'antenna-direction'
-  | 'equipment-room'
-  | 'cable-route'
-  | 'roof-mounting'
-  | 'power-meter'
-  | 'grounding'
-  | 'crane-area'
-  | 'other';
+  | "unsorted"
+  | "site-overview"
+  | "antenna-direction"
+  | "equipment-room"
+  | "cable-route"
+  | "roof-mounting"
+  | "power-meter"
+  | "grounding"
+  | "crane-area"
+  | "other";
 
 export interface PhotoSectionBucket {
   id: PhotoSection;
@@ -143,9 +193,18 @@ export interface PhotoSectionBucket {
 
 export interface SketchElement {
   id: string;
-  type: 'equipment' | 'cable' | 'building' | 'label' | 'dimension';
-  equipmentType?: 'cabinet' | 'antenna' | 'rrh' | 'atoa' | 'rack' | 'power' | 'meter' | 'ground' | 'gps';
-  cableType?: 'tray' | 'dc' | 'fiber';
+  type: "equipment" | "cable" | "building" | "label" | "dimension";
+  equipmentType?:
+    | "cabinet"
+    | "antenna"
+    | "rrh"
+    | "atoa"
+    | "rack"
+    | "power"
+    | "meter"
+    | "ground"
+    | "gps";
+  cableType?: "tray" | "dc" | "fiber";
   position: { x: number; y: number };
   rotation?: number; // For antennas
   label?: string;
@@ -167,17 +226,23 @@ export interface SketchData {
 
 // Workflow and Role Types
 
-export type UserRole = 'maker' | 'checker' | 'spl' | 'electrician' | 'builder' | 'manager';
+export type UserRole =
+  | "maker"
+  | "checker"
+  | "spl"
+  | "electrician"
+  | "builder"
+  | "manager";
 
-export type WorkflowStatus = 
-  | 'draft'
-  | 'internal-review'
-  | 'changes-requested'
-  | 'submitted'
-  | 'rejected'
-  | 'approved'
-  | 'building'
-  | 'as-built-complete';
+export type WorkflowStatus =
+  | "draft"
+  | "internal-review"
+  | "changes-requested"
+  | "submitted"
+  | "rejected"
+  | "approved"
+  | "building"
+  | "as-built-complete";
 
 export interface User {
   id: string;
@@ -202,7 +267,7 @@ export interface Comment {
 
 export interface SectionReview {
   sectionId: string;
-  status: 'approved' | 'needs-changes' | 'rejected' | 'pending';
+  status: "approved" | "needs-changes" | "rejected" | "pending";
   reviewerId?: string;
   reviewerName?: string;
   timestamp?: number;
