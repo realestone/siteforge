@@ -3,6 +3,8 @@ import {
   FileSpreadsheet,
   LayoutDashboard,
   Zap,
+  ClipboardList,
+  FileWarning,
   CheckCircle2,
   AlertCircle,
   Circle,
@@ -18,19 +20,25 @@ import {
 import { RadioPlanSection } from "./sections/RadioPlanSection";
 import { PowerCalcSection } from "./sections/PowerCalcSection";
 import { SiteOverviewSection } from "./sections/SiteOverviewSection";
+import { PlannedWorksSection } from "./sections/PlannedWorksSection";
+import { DeviationReportSection } from "./sections/DeviationReportSection";
 
 // Map icon names to components
 const ICON_MAP: Record<string, React.FC<{ className?: string }>> = {
   FileSpreadsheet,
   LayoutDashboard,
   Zap,
+  ClipboardList,
+  FileWarning,
 };
 
 // Map section IDs to their form components
 const SECTION_COMPONENTS: Record<SectionId, React.FC> = {
   "radio-plan": RadioPlanSection,
   "power-calculator": PowerCalcSection,
+  "planned-works": PlannedWorksSection,
   overview: SiteOverviewSection,
+  "as-built-deviations": DeviationReportSection,
 };
 
 interface TSSRContentAreaProps {
@@ -47,7 +55,7 @@ export const TSSRContentArea: React.FC<TSSRContentAreaProps> = ({
   const IconComponent = config ? ICON_MAP[config.iconName] : null;
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden bg-white">
+    <div className="flex flex-1 flex-col min-h-0 overflow-hidden bg-white">
       {/* Section header */}
       {config && (
         <div className="flex items-center gap-3 border-b border-gray-200 px-6 py-4">

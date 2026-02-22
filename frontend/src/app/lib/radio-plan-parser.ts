@@ -33,6 +33,21 @@ export interface RadioPlanSector {
   feedLength: number | null;
   cableType: string;
   jumpers: string;
+  heights: number[];
+  lbRrh: number;
+  hbRrh: number;
+  aqqyCount: number;
+  totalRrh: number;
+  antennaModel: string | null;
+}
+
+export interface MountGroup {
+  id: string;
+  sectorIds: string[];
+  mountCode: string;
+  rrhCount: number;
+  aqqyCount: number;
+  antennaCount: number;
 }
 
 export interface RadioPlanData {
@@ -42,6 +57,11 @@ export interface RadioPlanData {
   config: string;
   totalCells: number;
   rawRows: RadioPlanCell[];
+  mountGroups: MountGroup[];
+  totalLbRrh: number;
+  totalHbRrh: number;
+  totalAqqy: number;
+  totalAntennas: number;
 }
 
 function toNum(v: unknown): number | null {
@@ -117,6 +137,25 @@ export async function parseRadioPlan(
     const cableType = sectorCells[0]?.cableType || "";
     const jumpers = sectorCells[0]?.jumpers || "";
 
+    const heights = [
+      ...new Set(
+        sectorCells.map((c) => c.height).filter((h): h is number => h !== null),
+      ),
+    ].sort((a, b) => a - b);
+
+    const hasPassive = antennas.some((a) => a.startsWith("RRZZ"));
+    const hasAqqy = antennas.some(
+      (a) => a.includes("AQQY") || a.includes("mMIMO"),
+    );
+    const hasLte = technologies.includes("LTE");
+    const hasNrSector = technologies.includes("NR");
+    const lbRrh = hasPassive && hasLte ? 1 : 0;
+    const hbRrh = hasPassive && hasNrSector ? 1 : 0;
+    const aqqyCount = hasAqqy ? 1 : 0;
+    const antennaModel = hasPassive
+      ? (antennas.find((a) => a.startsWith("RRZZ")) ?? null)
+      : null;
+
     sectors.push({
       id,
       azimuth,
@@ -128,19 +167,41 @@ export async function parseRadioPlan(
       feedLength,
       cableType,
       jumpers,
+      heights,
+      lbRrh,
+      hbRrh,
+      aqqyCount,
+      totalRrh: lbRrh + hbRrh,
+      antennaModel,
     });
   }
 
-  // Build config string: N prefix (if any sector has NR) + one L per sector + "_"
-  // Convention: 3 sectors with NR+LTE → "NLLL_", 2 sectors → "NLL_", 1 sector → "NM_"
+  // Build config string: [N]<sector_sizes>_
+  //   N = New site (fresh install)
+  //   L = Large sector (NR + LTE + mMIMO AQQY)
+  //   M = Medium sector (LTE + NR, no mMIMO)
+  //   S = Small sector (LTE only)
+  //   _ = terminator
+  // Detect sector size per-sector based on actual equipment:
+  //   - Has AQQY/mMIMO antenna → L (Large)
+  //   - Has NR technology but no mMIMO → M (Medium)
+  //   - LTE only → S (Small)
   const hasNR = sectors.some((s) => s.technologies.includes("NR"));
-  const sectorCount = sectors.length;
-  let config: string;
-  if (sectorCount === 1) {
-    config = hasNR ? "NM_" : "M_";
-  } else {
-    config = (hasNR ? "N" : "") + "L".repeat(sectorCount) + "_";
-  }
+  const sectorSizes = sectors.map((s) => {
+    if (s.aqqyCount > 0) return "L";
+    if (s.technologies.includes("NR")) return "M";
+    return "S";
+  });
+  const config = (hasNR ? "N" : "") + sectorSizes.join("") + "_";
+
+  // Compute site-level totals
+  const totalLbRrh = sectors.reduce((s, sec) => s + sec.lbRrh, 0);
+  const totalHbRrh = sectors.reduce((s, sec) => s + sec.hbRrh, 0);
+  const totalAqqy = sectors.reduce((s, sec) => s + sec.aqqyCount, 0);
+  const totalAntennas = sectors.filter((s) => s.antennaModel !== null).length;
+
+  // Compute mount groups (sectors within 120° share a free-standing mount)
+  const mountGroups = computeMountGroups(sectors);
 
   return {
     siteId,
@@ -149,5 +210,120 @@ export async function parseRadioPlan(
     config,
     totalCells: cells.length,
     rawRows: cells,
+    mountGroups,
+    totalLbRrh,
+    totalHbRrh,
+    totalAqqy,
+    totalAntennas,
+  };
+}
+
+// ── Mount grouping algorithm ──────────────────────────────────────
+
+function angularDistance(a: number, b: number): number {
+  const diff = Math.abs(a - b) % 360;
+  return diff > 180 ? 360 - diff : diff;
+}
+
+/**
+ * Group sectors that are within 120° of each other onto shared mounts.
+ * Multi-sector group → "985300" (multi-arm FS), single → "980300" (single-arm FS).
+ *
+ * Algorithm: find the largest clique where all pairwise angular distances ≤ 120°.
+ * For Nørvevika: A(0°), B(90°), C(270°)
+ *   {A,B,C} fails: B→C = 180° > 120°
+ *   {A,C} = 90° ✓, {A,B} = 90° ✓ — pick largest group first, then assign rest.
+ *   Since {A,C} and {A,B} are same size, pick the one with smallest angular span.
+ *   A→C span = 90° (wrap), A→B span = 90°. Tiebreak: pick wrap-around pair {A,C}.
+ *   Result: {A,C} → 985300, {B} → 980300. ✅ Matches real TSSR.
+ */
+function computeMountGroups(sectors: RadioPlanSector[]): MountGroup[] {
+  if (sectors.length === 0) return [];
+  if (sectors.length === 1) {
+    return [makeMountGroup("MG1", sectors)];
+  }
+
+  // For small sector counts (≤4), enumerate all valid cliques
+  const indices = sectors.map((_, i) => i);
+  const validCliques: number[][] = [];
+
+  // Generate all subsets of size ≥ 2
+  for (let mask = 3; mask < 1 << sectors.length; mask++) {
+    const subset: number[] = [];
+    for (let i = 0; i < sectors.length; i++) {
+      if (mask & (1 << i)) subset.push(i);
+    }
+    if (subset.length < 2) continue;
+    // Check all pairwise distances ≤ 120°
+    let valid = true;
+    for (let a = 0; a < subset.length && valid; a++) {
+      for (let b = a + 1; b < subset.length && valid; b++) {
+        if (
+          angularDistance(
+            sectors[subset[a]].azimuth,
+            sectors[subset[b]].azimuth,
+          ) > 120
+        ) {
+          valid = false;
+        }
+      }
+    }
+    if (valid) validCliques.push(subset);
+  }
+
+  // Sort cliques: largest first, then smallest angular span as tiebreak
+  validCliques.sort((a, b) => {
+    if (b.length !== a.length) return b.length - a.length;
+    return cliqueSpan(a, sectors) - cliqueSpan(b, sectors);
+  });
+
+  // Greedy assignment: pick largest valid clique, remove those sectors, repeat
+  const assigned = new Set<number>();
+  const groups: MountGroup[] = [];
+  let groupId = 1;
+
+  for (const clique of validCliques) {
+    if (clique.some((i) => assigned.has(i))) continue;
+    clique.forEach((i) => assigned.add(i));
+    groups.push(
+      makeMountGroup(
+        `MG${groupId++}`,
+        clique.map((i) => sectors[i]),
+      ),
+    );
+  }
+
+  // Any remaining sectors get their own single mount
+  for (const i of indices) {
+    if (!assigned.has(i)) {
+      groups.push(makeMountGroup(`MG${groupId++}`, [sectors[i]]));
+    }
+  }
+
+  return groups;
+}
+
+function cliqueSpan(indices: number[], sectors: RadioPlanSector[]): number {
+  let maxDist = 0;
+  for (let a = 0; a < indices.length; a++) {
+    for (let b = a + 1; b < indices.length; b++) {
+      const d = angularDistance(
+        sectors[indices[a]].azimuth,
+        sectors[indices[b]].azimuth,
+      );
+      if (d > maxDist) maxDist = d;
+    }
+  }
+  return maxDist;
+}
+
+function makeMountGroup(id: string, secs: RadioPlanSector[]): MountGroup {
+  return {
+    id,
+    sectorIds: secs.map((s) => s.id),
+    mountCode: secs.length >= 2 ? "985300" : "980300",
+    rrhCount: secs.reduce((s, sec) => s + sec.totalRrh, 0),
+    aqqyCount: secs.reduce((s, sec) => s + sec.aqqyCount, 0),
+    antennaCount: secs.filter((s) => s.antennaModel !== null).length,
   };
 }

@@ -32,6 +32,10 @@ class BOQItemResponse(BaseModel):
     is_manual_override: bool = Field(False, alias="isManualOverride")
     override_note: str | None = Field(None, alias="overrideNote")
 
+    # As-built actuals
+    actual_quantity: float | None = Field(None, alias="actualQuantity")
+    actual_comment: str | None = Field(None, alias="actualComment")
+
     # Excel anchor (for frontend to know the row position)
     row_index: int | None = Field(None, alias="rowIndex")
     sheet_name: str | None = Field(None, alias="sheetName")
@@ -60,6 +64,8 @@ class BOQItemResponse(BaseModel):
                 "rule_applied": data.rule_applied,
                 "is_manual_override": data.is_manual_override,
                 "override_note": data.override_note,
+                "actual_quantity": data.actual_quantity,
+                "actual_comment": data.actual_comment,
                 "row_index": cat.row_index,
                 "sheet_name": cat.sheet_name,
             }
@@ -80,6 +86,8 @@ class BOQItemResponse(BaseModel):
                 "rule_applied": data.rule_applied,
                 "is_manual_override": data.is_manual_override,
                 "override_note": data.override_note,
+                "actual_quantity": data.actual_quantity,
+                "actual_comment": data.actual_comment,
                 "row_index": None,
                 "sheet_name": None,
             }
@@ -88,11 +96,13 @@ class BOQItemResponse(BaseModel):
 
 
 class BOQItemUpdate(BaseModel):
-    """Update quantity on a project BOQ item."""
+    """Update quantity or actuals on a project BOQ item."""
 
-    quantity: float
+    quantity: float | None = None
     is_manual_override: bool = True
     override_note: str | None = None
+    actual_quantity: float | None = None
+    actual_comment: str | None = None
 
 
 class BOQItemAdd(BaseModel):
@@ -165,6 +175,30 @@ class RadioPlanSectorInput(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
 
+class DcCableRunInput(BaseModel):
+    """A single DC cable run from the Effektkalkulator."""
+
+    sector: int = 0
+    band: str = ""
+    length_m: float = Field(0, alias="lengthM")
+    cross_section: float = Field(0, alias="crossSection")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class PowerCalcComputeInput(BaseModel):
+    """Relevant Effektkalkulator data for BOQ rules."""
+
+    rectifier_modules: int = Field(0, alias="rectifierModules")
+    rectifier_model: str = Field("", alias="rectifierModel")
+    rectifier_is_new: bool = Field(False, alias="rectifierIsNew")
+    max_modules: int = Field(0, alias="maxModules")
+    battery_strings: int = Field(0, alias="batteryStrings")
+    dc_cables: list[DcCableRunInput] = Field([], alias="dcCables")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
 class RadioPlanComputeRequest(BaseModel):
     """Parsed radio plan sent from frontend to compute BOQ."""
 
@@ -174,6 +208,7 @@ class RadioPlanComputeRequest(BaseModel):
     total_cells: int = Field(0, alias="totalCells")
     sectors: list[RadioPlanSectorInput] = []
     raw_rows: list[RadioPlanCellInput] = Field([], alias="rawRows")
+    power_calc: PowerCalcComputeInput | None = Field(None, alias="powerCalc")
 
     model_config = ConfigDict(populate_by_name=True)
 

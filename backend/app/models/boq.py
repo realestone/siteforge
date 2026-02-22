@@ -34,6 +34,10 @@ class ProjectBOQItem(Base, TimestampMixin):
     is_manual_override: Mapped[bool] = mapped_column(Boolean, default=False)
     override_note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # As-built actuals
+    actual_quantity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    actual_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     # Relationships
     project: Mapped["Project"] = relationship("Project", back_populates="boq_items")
     catalog_item: Mapped["BOQCatalogItem | None"] = relationship(

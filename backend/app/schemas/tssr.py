@@ -94,6 +94,12 @@ class TSSRInput(BaseModel):
     # Revision History
     revision_history: list[RevisionEntrySchema] = Field([], alias="revisionHistory")
 
+    # Planned Works (JSONB blob from frontend)
+    planned_works: dict | None = Field(None, alias="plannedWorks")
+
+    # As-built deviations
+    deviations_free_text: str | None = Field(None, alias="deviationsFreeText")
+
     # Other
     additional_notes: str = Field("", alias="additionalNotes")
 

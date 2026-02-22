@@ -1,7 +1,9 @@
 """
+
 Import BOQ catalog from the BoQ_v4.01 template Excel into PostgreSQL.
 
 Parses 3 sheets into 4 logical sections:
+
   - BoQ sheet, Source of ordering = "Lyse Tele"    → section "product"  (hardware)
   - BoQ sheet, Source of ordering = "TI contractor" → section "service"  (labor/work)
   - BoM Griptel sheet                               → section "griptel"
@@ -11,6 +13,7 @@ Only rows with a product_code in column B are imported.
 Extracts 7 fields: product_code, description, comments, ordering_hints,
                     product_category, product_subcategory, vendor.
 Stores row_index + sheet_name for Excel write-back on export.
+
 """
 
 import sys
@@ -72,7 +75,9 @@ def _import_sheet(
     sheet_name: str,
     fixed_section: CatalogSection | None = None,
 ) -> dict[str, int]:
-    """Import rows from a single sheet.
+    """
+
+    Import rows from a single sheet.
 
     Args:
         session: DB session
@@ -83,7 +88,9 @@ def _import_sheet(
 
     Returns:
         Dict with counts: {"product": N, "service": N, "skipped": N}
+
     """
+
     counts = {"product": 0, "service": 0, "griptel": 0, "solar": 0, "skipped": 0}
 
     for row in ws.iter_rows(min_row=DATA_START_ROW, values_only=False):

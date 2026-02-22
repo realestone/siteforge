@@ -8,3 +8,6 @@ __pycache__/
 *.pyc
 .env
 *.egg-info/
+
+# Uploads
+backend/uploads/

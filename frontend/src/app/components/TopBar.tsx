@@ -7,7 +7,12 @@ import {
   CheckCircle,
   ChevronDown,
   User,
+  Cloud,
+  ExternalLink,
+  Home,
+  History,
 } from "lucide-react";
+import { useMsal, useIsAuthenticated } from "@azure/msal-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -17,10 +22,20 @@ import {
   DropdownMenuLabel,
 } from "./ui/dropdown-menu";
 import { useSiteContext } from "../context/SiteContext";
-import { useWorkflowContext, availableUsers } from "../context/WorkflowContext";
+import {
+  useWorkflowContext,
+  availableUsers,
+  type WorkflowStatus,
+} from "../context/WorkflowContext";
+import { useNavigation } from "../context/NavigationContext";
 import { toast } from "sonner";
-import { exportBOQTemplate, exportTSSRTemplate } from "../api/client";
-import { WorkflowStatus } from "../types/site";
+import {
+  exportBOQTemplate,
+  exportTSSRTemplate,
+  recordExport,
+  API_BASE,
+} from "../api/client";
+import { uploadAndGetEditUrl } from "../api/graphService";
 
 const InfoField: React.FC<{
   label: string;
@@ -40,13 +55,32 @@ const InfoField: React.FC<{
 );
 
 export const TopBar: React.FC = () => {
-  const { tssrData, boqItems, projectId } = useSiteContext();
+  const {
+    tssrData,
+    boqItems,
+    projectId,
+    onedriveFolderPath,
+    tssrExportVersion,
+    boqExportVersion,
+    exportHistory,
+    setExportHistory,
+    incrementExportVersion,
+    buildProgress,
+  } = useSiteContext();
+  const { navigateHome } = useNavigation();
+  const { instance } = useMsal();
+  const isMsalAuthenticated = useIsAuthenticated();
   const {
     currentUser,
-    workflow,
+    status,
     canEdit,
+    isReviewer,
+    isAtLeastStatus,
     submitForReview,
-    approveAndForward,
+    approve,
+    requestChanges,
+    startBuild,
+    completeAsBuilt,
     setCurrentUser,
   } = useWorkflowContext();
 
@@ -54,6 +88,29 @@ export const TopBar: React.FC = () => {
     toast.success("Draft saved", {
       description: "All changes saved successfully",
     });
+  };
+
+  const logExport = async (
+    type: string,
+    version: number,
+    destination: "download" | "onedrive",
+    filename: string,
+    onedrivePath?: string,
+  ) => {
+    if (!projectId) return;
+    try {
+      const updated = await recordExport(projectId, {
+        type,
+        version,
+        destination,
+        filename,
+        timestamp: new Date().toISOString(),
+        onedrive_path: onedrivePath || null,
+      });
+      setExportHistory(updated);
+    } catch {
+      // Non-critical — don't block export
+    }
   };
 
   const handleExport = async (
@@ -65,6 +122,8 @@ export const TopBar: React.FC = () => {
         return;
       }
       const format = type === "tssr-modern" ? "modern" : "legacy";
+      const siteId = tssrData.siteId || "export";
+      const filename = `${siteId}_TSSR.docx`;
       try {
         await exportTSSRTemplate(projectId, format);
         toast.success("TSSR exported", {
@@ -73,6 +132,12 @@ export const TopBar: React.FC = () => {
               ? "Modern template generated and downloaded"
               : "Template filled with project data and downloaded",
         });
+        logExport(
+          type === "tssr-modern" ? "tssr-modern" : "tssr",
+          0,
+          "download",
+          filename,
+        );
       } catch {
         toast.error("TSSR export failed");
       }
@@ -82,51 +147,130 @@ export const TopBar: React.FC = () => {
         toast.warning("No project loaded");
         return;
       }
+      const siteId = tssrData.siteId || "export";
+      const filename = `${siteId}_BOQ.xlsm`;
       try {
         await exportBOQTemplate(projectId);
         toast.success("BOQ exported", {
           description: "Template filled with quantities and downloaded",
         });
+        logExport("boq", 0, "download", filename);
       } catch {
         toast.error("BOQ export failed");
       }
     }
   };
 
-  const getStatusColor = (status: WorkflowStatus) => {
+  const handleAsBuiltExport = async (type: "tssr" | "boq") => {
+    if (!projectId) {
+      toast.warning("No project loaded");
+      return;
+    }
+    try {
+      if (type === "tssr") {
+        await exportTSSRTemplate(projectId, "modern", true);
+        toast.success("As-Built TSSR exported");
+      } else {
+        await exportBOQTemplate(projectId, true);
+        toast.success("As-Built BOQ exported");
+      }
+    } catch {
+      toast.error(`As-Built ${type.toUpperCase()} export failed`);
+    }
+  };
+
+  const handleExportToOneDrive = async (type: "tssr" | "boq") => {
+    if (!projectId) {
+      toast.warning("No project loaded");
+      return;
+    }
+    if (!isMsalAuthenticated) {
+      toast.warning("Sign in to OneDrive first (ONEDRIVE tab)");
+      return;
+    }
+
+    const siteId = tssrData.siteId || "unknown";
+    const nextVersion =
+      type === "tssr" ? tssrExportVersion + 1 : boqExportVersion + 1;
+    const versionStr = String(nextVersion).padStart(2, "0");
+
+    // Use linked folder if available, otherwise fallback to SiteForge/{siteId}
+    const folderPath = onedriveFolderPath || `SiteForge/${siteId}`;
+
+    try {
+      toast.info(
+        `Exporting ${type.toUpperCase()} v${versionStr} to OneDrive...`,
+      );
+
+      // Get file blob from backend
+      let blob: Blob;
+      if (type === "tssr") {
+        const res = await fetch(
+          `${API_BASE}/api/projects/${projectId}/tssr/export?format=legacy`,
+        );
+        if (!res.ok) throw new Error("TSSR export failed");
+        blob = await res.blob();
+      } else {
+        const res = await fetch(
+          `${API_BASE}/api/projects/${projectId}/boq/export`,
+        );
+        if (!res.ok) throw new Error("BOQ export failed");
+        blob = await res.blob();
+      }
+
+      // Versioned filename
+      const fileName =
+        type === "tssr"
+          ? `${siteId}_TSSR_v${versionStr}.docx`
+          : `${siteId}_BOQ_v${versionStr}.xlsm`;
+
+      const result = await uploadAndGetEditUrl(
+        instance,
+        folderPath,
+        fileName,
+        await blob.arrayBuffer(),
+      );
+
+      // Increment version in state + backend
+      incrementExportVersion(type);
+
+      // Log to export history
+      logExport(type, nextVersion, "onedrive", fileName, folderPath);
+
+      toast.success(`${type.toUpperCase()} v${versionStr} saved to OneDrive`, {
+        description: `${folderPath}/${fileName}`,
+      });
+
+      // Open in Word/Excel Online
+      window.open(result.webUrl, "_blank");
+    } catch (err: any) {
+      console.error("Export to OneDrive failed:", err);
+      toast.error(`Export failed: ${err.message}`);
+    }
+  };
+
+  const getStatusColor = (s: WorkflowStatus) => {
     const colors: Record<WorkflowStatus, string> = {
       draft: "bg-gray-500",
-      "internal-review": "bg-blue-500",
-      "changes-requested": "bg-orange-500",
-      submitted: "bg-purple-500",
-      rejected: "bg-red-500",
+      in_review: "bg-blue-500",
+      changes_requested: "bg-orange-500",
       approved: "bg-green-500",
-      building: "bg-teal-500",
-      "as-built-complete": "bg-emerald-700",
+      building: "bg-indigo-500",
+      as_built_complete: "bg-emerald-600",
     };
-    return colors[status] || "bg-gray-500";
+    return colors[s] || "bg-gray-500";
   };
 
-  const getStatusLabel = (status: WorkflowStatus) => {
+  const getStatusLabel = (s: WorkflowStatus) => {
     const labels: Record<WorkflowStatus, string> = {
       draft: "Draft",
-      "internal-review": "Internal Review",
-      "changes-requested": "Changes Requested",
-      submitted: "Submitted",
-      rejected: "Rejected",
+      in_review: "In Review",
+      changes_requested: "Changes Requested",
       approved: "Approved",
       building: "Building",
-      "as-built-complete": "As-Built Complete",
+      as_built_complete: "As-Built Complete",
     };
-    return labels[status] || status;
-  };
-
-  const getTimeSince = (timestamp: number | undefined) => {
-    if (!timestamp) return "";
-    const days = Math.floor((Date.now() - timestamp) / (1000 * 60 * 60 * 24));
-    if (days === 0) return "today";
-    if (days === 1) return "1 day";
-    return `${days} days`;
+    return labels[s] || s;
   };
 
   return (
@@ -135,7 +279,14 @@ export const TopBar: React.FC = () => {
         {/* Left: Logo + Project Info + Status */}
         <div className="flex items-center gap-4">
           {/* Logo / Branding */}
-          <span className="text-xl font-bold text-gray-900">SiteForge</span>
+          <button
+            onClick={navigateHome}
+            className="flex items-center gap-2 text-xl font-bold text-gray-900 hover:text-teal-700 transition-colors"
+            title="Back to projects"
+          >
+            <Home className="h-4 w-4" />
+            SiteForge
+          </button>
 
           {/* Divider */}
           <div className="h-8 w-px bg-gray-200" />
@@ -166,30 +317,42 @@ export const TopBar: React.FC = () => {
             <InfoField label="Version" value="1.0" placeholder="—" />
           </div>
 
+          {/* OneDrive folder breadcrumb */}
+          {onedriveFolderPath && (
+            <>
+              <div className="h-8 w-px bg-gray-200" />
+              <div className="flex items-center gap-1.5 text-xs text-gray-500 max-w-[200px]">
+                <Cloud className="h-3.5 w-3.5 text-blue-500 flex-shrink-0" />
+                <span className="truncate" title={onedriveFolderPath}>
+                  {onedriveFolderPath}
+                </span>
+              </div>
+            </>
+          )}
+
           {/* Divider */}
           <div className="h-8 w-px bg-gray-200" />
 
-          {/* Existing status info */}
+          {/* Status info */}
           <div className="flex items-center gap-2 text-xs">
             <div className="flex items-center gap-1.5">
               <span className="text-gray-500">Status:</span>
               <Badge
-                className={`${getStatusColor(workflow.status)} text-white border-0 text-[10px] px-2 py-0.5`}
+                className={`${getStatusColor(status)} text-white border-0 text-[10px] px-2 py-0.5`}
               >
-                &#9679; {getStatusLabel(workflow.status)}
+                &#9679; {getStatusLabel(status)}
               </Badge>
             </div>
-            {workflow.assignedTo && (
+            {isAtLeastStatus("building") && buildProgress.total > 0 && (
               <>
                 <span className="text-gray-400">&bull;</span>
                 <span className="text-gray-600">
-                  Assigned to: {workflow.assignedTo.name}
+                  Build: {buildProgress.completed}/{buildProgress.total} (
+                  {Math.round(
+                    (buildProgress.completed / buildProgress.total) * 100,
+                  )}
+                  %)
                 </span>
-                {workflow.assignedAt && (
-                  <span className="text-gray-500">
-                    ({getTimeSince(workflow.assignedAt)})
-                  </span>
-                )}
               </>
             )}
             {tssrData.config && (
@@ -280,38 +443,143 @@ export const TopBar: React.FC = () => {
                 <FileDown className="mr-2 h-4 w-4" />
                 Both (Legacy TSSR + BOQ)
               </DropdownMenuItem>
+              {isAtLeastStatus("building") && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuLabel>As-Built</DropdownMenuLabel>
+                  <DropdownMenuItem onClick={() => handleAsBuiltExport("tssr")}>
+                    <FileDown className="mr-2 h-4 w-4 text-orange-500" />
+                    As-Built TSSR
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => handleAsBuiltExport("boq")}>
+                    <FileDown className="mr-2 h-4 w-4 text-orange-500" />
+                    As-Built BOQ
+                  </DropdownMenuItem>
+                </>
+              )}
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>OneDrive</DropdownMenuLabel>
+              <DropdownMenuItem
+                onClick={() => handleExportToOneDrive("tssr")}
+                disabled={!isMsalAuthenticated}
+              >
+                <Cloud className="mr-2 h-4 w-4" />
+                Save TSSR to OneDrive (v
+                {String(tssrExportVersion + 1).padStart(2, "0")})
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => handleExportToOneDrive("boq")}
+                disabled={!isMsalAuthenticated}
+              >
+                <Cloud className="mr-2 h-4 w-4" />
+                Save BOQ to OneDrive (v
+                {String(boqExportVersion + 1).padStart(2, "0")})
+              </DropdownMenuItem>
+              {!isMsalAuthenticated && (
+                <p className="px-2 py-1 text-[10px] text-gray-400">
+                  Sign in via ONEDRIVE tab first
+                </p>
+              )}
+              {onedriveFolderPath && (
+                <p className="px-2 py-1 text-[10px] text-gray-400">
+                  Target: {onedriveFolderPath}
+                </p>
+              )}
+              {exportHistory.length > 0 && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuLabel>
+                    <span className="flex items-center gap-1.5">
+                      <History className="h-3 w-3" />
+                      Recent Exports
+                    </span>
+                  </DropdownMenuLabel>
+                  {exportHistory
+                    .slice()
+                    .reverse()
+                    .slice(0, 5)
+                    .map((entry, i) => {
+                      const date = new Date(entry.timestamp);
+                      const timeStr = date.toLocaleDateString("nb-NO", {
+                        day: "2-digit",
+                        month: "short",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      });
+                      const icon = entry.destination === "onedrive" ? "☁" : "↓";
+                      const vStr =
+                        entry.version > 0
+                          ? ` v${String(entry.version).padStart(2, "0")}`
+                          : "";
+                      return (
+                        <div
+                          key={i}
+                          className="px-2 py-1 text-[11px] text-gray-500 flex justify-between gap-3"
+                        >
+                          <span className="truncate">
+                            {icon} {entry.type.toUpperCase()}
+                            {vStr}
+                          </span>
+                          <span className="text-gray-400 whitespace-nowrap">
+                            {timeStr}
+                          </span>
+                        </div>
+                      );
+                    })}
+                </>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
 
-          {/* Submit / Approve */}
-          {currentUser.role === "maker" && workflow.status === "draft" && (
-            <button
-              onClick={submitForReview}
-              className="inline-flex items-center gap-2 h-9 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 hover:shadow-sm transition-all"
-            >
-              <SendHorizonal className="h-4 w-4" />
-              Submit
-            </button>
-          )}
-
-          {currentUser.role === "checker" &&
-            workflow.status === "internal-review" && (
+          {/* Submit (maker in draft or changes_requested) */}
+          {currentUser.role === "maker" &&
+            (status === "draft" || status === "changes_requested") && (
               <button
-                onClick={approveAndForward}
+                onClick={submitForReview}
                 className="inline-flex items-center gap-2 h-9 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 hover:shadow-sm transition-all"
               >
-                <CheckCircle className="h-4 w-4" />
-                Approve & Forward
+                <SendHorizonal className="h-4 w-4" />
+                Submit
               </button>
             )}
 
-          {currentUser.role === "spl" && workflow.status === "submitted" && (
+          {/* Reviewer actions */}
+          {isReviewer && status === "in_review" && (
+            <>
+              <button
+                onClick={() => requestChanges()}
+                className="inline-flex items-center gap-2 h-9 px-4 py-2 text-sm font-medium text-orange-600 bg-orange-50 border border-orange-300 rounded-lg hover:bg-orange-100 transition-colors"
+              >
+                Request Changes
+              </button>
+              <button
+                onClick={approve}
+                className="inline-flex items-center gap-2 h-9 px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 hover:shadow-sm transition-all"
+              >
+                <CheckCircle className="h-4 w-4" />
+                Approve
+              </button>
+            </>
+          )}
+
+          {/* Start Build (maker, when approved) */}
+          {currentUser.role === "maker" && status === "approved" && (
             <button
-              onClick={approveAndForward}
-              className="inline-flex items-center gap-2 h-9 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 hover:shadow-sm transition-all"
+              onClick={startBuild}
+              className="inline-flex items-center gap-2 h-9 px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 hover:shadow-sm transition-all"
+            >
+              Start Build
+            </button>
+          )}
+
+          {/* Complete As-Built (maker, when building) */}
+          {currentUser.role === "maker" && status === "building" && (
+            <button
+              onClick={completeAsBuilt}
+              className="inline-flex items-center gap-2 h-9 px-4 py-2 text-sm font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 hover:shadow-sm transition-all"
             >
               <CheckCircle className="h-4 w-4" />
-              Approve
+              Complete As-Built
             </button>
           )}
         </div>

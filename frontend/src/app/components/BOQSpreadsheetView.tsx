@@ -64,6 +64,7 @@ type SortDir = "asc" | "desc";
 interface BOQSpreadsheetViewProps {
   items: BOQItem[];
   recentChanges: Set<string>;
+  showActuals?: boolean;
 }
 
 // ── Editable Quantity Cell ──────────────────────────────────────────
@@ -139,11 +140,145 @@ const EditableQuantityCell: React.FC<{
   );
 };
 
+// ── Editable Actual Quantity Cell ────────────────────────────────────
+
+const EditableActualQtyCell: React.FC<{
+  item: BOQItem;
+}> = ({ item }) => {
+  const { updateBOQItemActuals } = useSiteContext();
+  const [editing, setEditing] = useState(false);
+  const actualVal = item.actualQuantity ?? item.quantity;
+  const [draft, setDraft] = useState(String(actualVal));
+  const inputRef = useRef<HTMLInputElement>(null);
+  const differs =
+    item.actualQuantity != null && item.actualQuantity !== item.quantity;
+
+  useEffect(() => {
+    if (editing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [editing]);
+
+  useEffect(() => {
+    if (!editing) setDraft(String(item.actualQuantity ?? item.quantity));
+  }, [item.actualQuantity, item.quantity, editing]);
+
+  const commit = useCallback(() => {
+    const num = parseFloat(draft);
+    if (!isNaN(num) && num >= 0) {
+      updateBOQItemActuals(item.id, num, item.actualComment ?? null);
+    }
+    setEditing(false);
+  }, [draft, item.id, item.actualComment, updateBOQItemActuals]);
+
+  if (editing) {
+    return (
+      <input
+        ref={inputRef}
+        type="number"
+        min="0"
+        step="1"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit();
+          if (e.key === "Escape") {
+            setDraft(String(actualVal));
+            setEditing(false);
+          }
+        }}
+        className="w-16 h-7 px-1.5 text-right text-sm font-semibold tabular-nums border border-orange-400 rounded bg-white outline-none ring-2 ring-orange-200"
+      />
+    );
+  }
+
+  return (
+    <button
+      onClick={() => setEditing(true)}
+      className={`w-16 h-7 px-1.5 text-right text-sm font-semibold tabular-nums rounded cursor-pointer transition-colors ${
+        differs
+          ? "bg-orange-100 text-orange-700"
+          : "text-gray-900 hover:bg-gray-100"
+      }`}
+      title="Click to edit actual quantity"
+    >
+      {actualVal}
+    </button>
+  );
+};
+
+// ── Actual Comment Cell ──────────────────────────────────────────────
+
+const ActualCommentCell: React.FC<{ item: BOQItem }> = ({ item }) => {
+  const { updateBOQItemActuals } = useSiteContext();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(item.actualComment ?? "");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (editing && inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, [editing]);
+
+  useEffect(() => {
+    if (!editing) setDraft(item.actualComment ?? "");
+  }, [item.actualComment, editing]);
+
+  const commit = useCallback(() => {
+    const val = draft.trim() || null;
+    if (val !== (item.actualComment ?? null)) {
+      updateBOQItemActuals(item.id, item.actualQuantity ?? null, val);
+    }
+    setEditing(false);
+  }, [
+    draft,
+    item.id,
+    item.actualQuantity,
+    item.actualComment,
+    updateBOQItemActuals,
+  ]);
+
+  if (editing) {
+    return (
+      <input
+        ref={inputRef}
+        type="text"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit();
+          if (e.key === "Escape") {
+            setDraft(item.actualComment ?? "");
+            setEditing(false);
+          }
+        }}
+        placeholder="Comment..."
+        className="w-full h-7 px-1.5 text-xs border border-orange-400 rounded bg-white outline-none ring-2 ring-orange-200"
+      />
+    );
+  }
+
+  return (
+    <button
+      onClick={() => setEditing(true)}
+      className="w-full h-7 px-1.5 text-left text-xs text-gray-500 rounded cursor-pointer hover:bg-gray-100 truncate"
+      title={item.actualComment || "Click to add comment"}
+    >
+      {item.actualComment || "—"}
+    </button>
+  );
+};
+
 // ── Spreadsheet View ────────────────────────────────────────────────
 
 export const BOQSpreadsheetView: React.FC<BOQSpreadsheetViewProps> = ({
   items,
   recentChanges,
+  showActuals = false,
 }) => {
   const [sortField, setSortField] = useState<SortField | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>("asc");
@@ -247,9 +382,23 @@ export const BOQSpreadsheetView: React.FC<BOQSpreadsheetViewProps> = ({
             <SortableHead field="description" label="Description" />
             <SortableHead
               field="quantity"
-              label="Qty"
+              label={showActuals ? "Plan Qty" : "Qty"}
               className="w-[80px] text-right"
             />
+            {showActuals && (
+              <TableHead className="w-[80px] text-right">
+                <span className="text-[11px] font-semibold text-orange-600 uppercase tracking-wide">
+                  Act Qty
+                </span>
+              </TableHead>
+            )}
+            {showActuals && (
+              <TableHead className="w-[120px]">
+                <span className="text-[11px] font-semibold text-orange-600 uppercase tracking-wide">
+                  Comment
+                </span>
+              </TableHead>
+            )}
             {showCategory && (
               <SortableHead
                 field="productCategory"
@@ -307,6 +456,16 @@ export const BOQSpreadsheetView: React.FC<BOQSpreadsheetViewProps> = ({
                     isChanged={isChanged}
                   />
                 </TableCell>
+                {showActuals && (
+                  <TableCell className="text-right">
+                    <EditableActualQtyCell item={item} />
+                  </TableCell>
+                )}
+                {showActuals && (
+                  <TableCell className="max-w-[120px]">
+                    <ActualCommentCell item={item} />
+                  </TableCell>
+                )}
                 {showCategory && (
                   <TableCell
                     className="max-w-[120px]"

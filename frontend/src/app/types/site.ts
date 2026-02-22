@@ -41,6 +41,10 @@ export interface BOQItem {
   isManualOverride?: boolean;
   overrideNote?: string | null;
 
+  // As-built actuals
+  actualQuantity?: number | null;
+  actualComment?: string | null;
+
   // Excel anchor (for export)
   rowIndex?: number | null;
   sheetName?: string | null;
@@ -146,6 +150,9 @@ export interface TSSRData {
 
   // Other
   additionalNotes: string;
+
+  // Planned Works (JSONB on backend)
+  plannedWorks?: import("./planned-works").PlannedWorksState | null;
 }
 
 // Photo and Drawing Types
@@ -162,34 +169,20 @@ export interface Annotation {
 export interface Photo {
   id: string;
   fileName: string;
+  autoFilename?: string;
   fileUrl: string;
-  section?: PhotoSection; // Which TSSR section it belongs to
+  thumbnailUrl?: string;
+  section?: import("../lib/photo-categories").TSSRPhotoCategory;
   sectorId?: string; // For antenna direction photos
   caption?: string;
   annotations: Annotation[];
   exifCompass?: number; // Compass bearing from EXIF
   timestamp: number;
+  phase?: string; // "planning" | "as_built"
 }
 
-export type PhotoSection =
-  | "unsorted"
-  | "site-overview"
-  | "antenna-direction"
-  | "equipment-room"
-  | "cable-route"
-  | "roof-mounting"
-  | "power-meter"
-  | "grounding"
-  | "crane-area"
-  | "other";
-
-export interface PhotoSectionBucket {
-  id: PhotoSection;
-  title: string;
-  required: boolean;
-  maxPhotos?: number;
-  sectorSpecific?: boolean; // For antenna direction photos
-}
+// Re-export for backwards compatibility
+export type PhotoSection = import("../lib/photo-categories").TSSRPhotoCategory;
 
 export interface SketchElement {
   id: string;
@@ -222,104 +215,4 @@ export interface SketchData {
   zoom: number;
   mapView: boolean; // Canvas or Map overlay
   mapCenter?: { lat: number; lng: number };
-}
-
-// Workflow and Role Types
-
-export type UserRole =
-  | "maker"
-  | "checker"
-  | "spl"
-  | "electrician"
-  | "builder"
-  | "manager";
-
-export type WorkflowStatus =
-  | "draft"
-  | "internal-review"
-  | "changes-requested"
-  | "submitted"
-  | "rejected"
-  | "approved"
-  | "building"
-  | "as-built-complete";
-
-export interface User {
-  id: string;
-  name: string;
-  email: string;
-  role: UserRole;
-  company?: string;
-}
-
-export interface Comment {
-  id: string;
-  authorId: string;
-  authorName: string;
-  authorRole: UserRole;
-  fieldPath?: string; // e.g., "sectorData.0.azimuth" or "boqItems.AHEGB"
-  sectionId?: string; // e.g., "site-identity", "radio-config"
-  message: string;
-  timestamp: number;
-  resolved: boolean;
-  replies?: Comment[];
-}
-
-export interface SectionReview {
-  sectionId: string;
-  status: "approved" | "needs-changes" | "rejected" | "pending";
-  reviewerId?: string;
-  reviewerName?: string;
-  timestamp?: number;
-  comments?: string[];
-}
-
-export interface WorkflowTransition {
-  id: string;
-  fromStatus: WorkflowStatus;
-  toStatus: WorkflowStatus;
-  userId: string;
-  userName: string;
-  timestamp: number;
-  note?: string;
-}
-
-export interface ElectricalSignOff {
-  signedOff: boolean;
-  electricianName?: string;
-  availableCapacity?: number;
-  fuseConfirmed?: boolean;
-  comments?: string;
-  capacityCheckDocument?: string;
-  timestamp?: number;
-}
-
-export interface BuilderTask {
-  id: string;
-  category: string;
-  description: string;
-  completed: boolean;
-  completedBy?: string;
-  completedAt?: number;
-}
-
-export interface AsBuiltPhoto {
-  id: string;
-  fileUrl: string;
-  uploadedBy: string;
-  uploadedAt: number;
-  category: string;
-  notes?: string;
-}
-
-export interface ProjectWorkflow {
-  status: WorkflowStatus;
-  assignedTo?: User;
-  assignedAt?: number;
-  history: WorkflowTransition[];
-  comments: Comment[];
-  sectionReviews: SectionReview[];
-  electricalSignOff?: ElectricalSignOff;
-  builderTasks?: BuilderTask[];
-  asBuiltPhotos?: AsBuiltPhoto[];
 }

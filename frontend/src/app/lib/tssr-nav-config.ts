@@ -2,9 +2,18 @@ import { TSSRData } from "../types/site";
 
 // ── Section & Group IDs ─────────────────────────────────────────
 
-export type SectionId = "radio-plan" | "power-calculator" | "overview";
+export type SectionId =
+  | "radio-plan"
+  | "power-calculator"
+  | "planned-works"
+  | "overview"
+  | "as-built-deviations";
 
-export type GroupId = "site-import" | "site-identity-access";
+export type GroupId =
+  | "site-import"
+  | "planned-works"
+  | "site-identity-access"
+  | "as-built";
 
 // ── Navigation Tree Data ────────────────────────────────────────
 
@@ -53,6 +62,22 @@ export const NAV_TREE: NavGroup[] = [
     ],
   },
   {
+    id: "planned-works",
+    label: "Planned Works",
+    sections: [
+      {
+        id: "planned-works",
+        label: "Planned Works",
+        iconName: "ClipboardList",
+        description: "Auto-generated description of planned works (TSSR §1.1)",
+        requiredFields: [],
+        optionalFields: [],
+        iconBg: "bg-emerald-100",
+        iconColor: "text-emerald-600",
+      },
+    ],
+  },
+  {
     id: "site-identity-access",
     label: "Site Identity & Access",
     sections: [
@@ -76,6 +101,22 @@ export const NAV_TREE: NavGroup[] = [
         ],
         iconBg: "bg-blue-100",
         iconColor: "text-blue-600",
+      },
+    ],
+  },
+  {
+    id: "as-built",
+    label: "As-Built",
+    sections: [
+      {
+        id: "as-built-deviations",
+        label: "Deviation Report",
+        iconName: "FileWarning",
+        description: "As-built deviations from planned BOQ and build tasks",
+        requiredFields: [],
+        optionalFields: [],
+        iconBg: "bg-orange-100",
+        iconColor: "text-orange-600",
       },
     ],
   },

@@ -12,6 +12,8 @@ from app.models.boq import ProjectBOQItem
 from app.models.catalog import BOQCatalogItem
 from app.services.dependency_engine import (
     BOQCalculation,
+    DcCableRun,
+    PowerCalcInput,
     RadioPlanCell,
     RadioPlanInput,
     RadioPlanSector,
@@ -82,37 +84,29 @@ async def _resolve_catalog(
     return {item.product_code: item for item in items}
 
 
-def _calc_to_response(calc: BOQCalculation, catalog: dict[str, BOQCatalogItem]) -> dict:
-    """Convert a BOQCalculation + optional catalog match to response dict."""
+def _calc_to_response(
+    calc: BOQCalculation, catalog: dict[str, BOQCatalogItem]
+) -> dict | None:
+    """Convert a BOQCalculation + catalog match to response dict.
+
+    Returns None if the product code is not in the catalog — skipped entirely.
+    """
     cat = catalog.get(calc.product_code)
-    if cat:
-        return {
-            "productCode": calc.product_code,
-            "description": cat.description,
-            "quantity": calc.quantity,
-            "section": cat.section.value if cat.section else calc.section,
-            "productCategory": cat.product_category or calc.category,
-            "productSubcategory": cat.product_subcategory,
-            "vendor": cat.vendor,
-            "ruleApplied": calc.rule,
-            "rowIndex": cat.row_index,
-            "sheetName": cat.sheet_name,
-            "inCatalog": True,
-        }
-    else:
-        return {
-            "productCode": calc.product_code,
-            "description": f"[Not in catalog] {calc.product_code}",
-            "quantity": calc.quantity,
-            "section": calc.section,
-            "productCategory": calc.category,
-            "productSubcategory": None,
-            "vendor": None,
-            "ruleApplied": calc.rule,
-            "rowIndex": None,
-            "sheetName": None,
-            "inCatalog": False,
-        }
+    if not cat:
+        return None
+    return {
+        "productCode": calc.product_code,
+        "description": cat.description,
+        "quantity": calc.quantity,
+        "section": cat.section.value if cat.section else calc.section,
+        "productCategory": cat.product_category or calc.category,
+        "productSubcategory": cat.product_subcategory,
+        "vendor": cat.vendor,
+        "ruleApplied": calc.rule,
+        "rowIndex": cat.row_index,
+        "sheetName": cat.sheet_name,
+        "inCatalog": True,
+    }
 
 
 async def compute_and_persist(
@@ -131,9 +125,27 @@ async def compute_and_persist(
     """
     # 1. Convert input
     rp_input = _schema_to_engine(body)
+    pc_input = None
+    if body.power_calc:
+        pc_input = PowerCalcInput(
+            rectifier_modules=body.power_calc.rectifier_modules,
+            rectifier_model=body.power_calc.rectifier_model,
+            rectifier_is_new=body.power_calc.rectifier_is_new,
+            max_modules=body.power_calc.max_modules,
+            battery_strings=body.power_calc.battery_strings,
+            dc_cables=[
+                DcCableRun(
+                    sector=c.sector,
+                    band=c.band,
+                    length_m=c.length_m,
+                    cross_section=c.cross_section,
+                )
+                for c in body.power_calc.dc_cables
+            ],
+        )
 
     # 2. Run rules
-    calculations = compute_boq(radio_plan=rp_input)
+    calculations = compute_boq(radio_plan=rp_input, power_calc=pc_input)
 
     # 3. Resolve catalog
     codes = list({c.product_code for c in calculations})
@@ -150,9 +162,11 @@ async def compute_and_persist(
 
     changed, added, removed = [], [], []
 
-    # 5. Upsert
+    # 5. Upsert — only items found in catalog
     for calc in calculations:
         cat = catalog.get(calc.product_code)
+        if not cat:
+            continue  # Skip items not in catalog
         existing = old_items.get(calc.product_code)
 
         if existing:
@@ -162,12 +176,12 @@ async def compute_and_persist(
                 old_qty = existing.quantity
                 existing.quantity = calc.quantity
                 existing.rule_applied = calc.rule
-                if cat and existing.catalog_item_id != cat.id:
+                if existing.catalog_item_id != cat.id:
                     existing.catalog_item_id = cat.id
                 changed.append(
                     {
                         "productCode": calc.product_code,
-                        "description": cat.description if cat else calc.product_code,
+                        "description": cat.description,
                         "oldQuantity": old_qty,
                         "newQuantity": calc.quantity,
                         "rule": calc.rule,
@@ -175,12 +189,12 @@ async def compute_and_persist(
                 )
             else:
                 # Link to catalog if not linked yet
-                if cat and not existing.catalog_item_id:
+                if not existing.catalog_item_id:
                     existing.catalog_item_id = cat.id
         else:
             new_item = ProjectBOQItem(
                 project_id=project_id,
-                catalog_item_id=cat.id if cat else None,
+                catalog_item_id=cat.id,
                 product_code=calc.product_code,
                 quantity=calc.quantity,
                 rule_applied=calc.rule,
@@ -190,7 +204,7 @@ async def compute_and_persist(
             added.append(
                 {
                     "productCode": calc.product_code,
-                    "description": cat.description if cat else calc.product_code,
+                    "description": cat.description,
                     "oldQuantity": 0,
                     "newQuantity": calc.quantity,
                     "rule": calc.rule,
@@ -214,7 +228,11 @@ async def compute_and_persist(
     await db.commit()
 
     # 6. Build response
-    response_items = [_calc_to_response(c, catalog) for c in calculations]
+    response_items = [
+        item
+        for c in calculations
+        if (item := _calc_to_response(c, catalog)) is not None
+    ]
 
     return {
         "items": response_items,

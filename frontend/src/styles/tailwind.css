@@ -1,31 +1,40 @@
-@import 'tailwindcss' source(none);
+@import "tailwindcss" source(none);
 @source '../**/*.{js,ts,jsx,tsx}';
 
-@import 'tw-animate-css';
+@import "tw-animate-css";
 
 /* Custom styles for SiteForge */
 @layer base {
-  /* Smooth scrollbars */
-  * {
-    scrollbar-width: thin;
-    scrollbar-color: #cbd5e1 transparent;
-  }
-  
-  *::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
-  }
-  
-  *::-webkit-scrollbar-track {
-    background: transparent;
-  }
-  
-  *::-webkit-scrollbar-thumb {
-    background-color: #cbd5e1;
-    border-radius: 4px;
-  }
-  
-  *::-webkit-scrollbar-thumb:hover {
-    background-color: #94a3b8;
-  }
+    /* Lock viewport — prevent body scroll, let panels scroll internally */
+    html,
+    body,
+    #root {
+        height: 100dvh;
+        margin: 0;
+        overflow: hidden;
+    }
+
+    /* Smooth scrollbars */
+    * {
+        scrollbar-width: thin;
+        scrollbar-color: #cbd5e1 transparent;
+    }
+
+    *::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+    }
+
+    *::-webkit-scrollbar-track {
+        background: transparent;
+    }
+
+    *::-webkit-scrollbar-thumb {
+        background-color: #cbd5e1;
+        border-radius: 4px;
+    }
+
+    *::-webkit-scrollbar-thumb:hover {
+        background-color: #94a3b8;
+    }
 }

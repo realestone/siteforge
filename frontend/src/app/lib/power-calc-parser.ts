@@ -54,13 +54,25 @@ export interface PowerCalcDcCable {
   crossSection: number; // mm2
 }
 
+export interface PowerCalcRectifierSetup {
+  isNew: boolean; // "Installer ny likeretter" vs reuse
+  model: string; // e.g. "Eltek FP2 - 24kW"
+  minModules: number; // minimum modules needed
+  maxModules: number; // max capacity of the cabinet
+}
+
 export interface PowerCalcData {
   siteInfo: PowerCalcSiteInfo;
   inputs: PowerCalcInput[];
   results: PowerCalcResults;
   energy: PowerCalcEnergy;
   rectifierTest: PowerCalcRectifierTest;
+  rectifierSetup: PowerCalcRectifierSetup;
   dcCables: PowerCalcDcCable[];
+  cabinetType: string;
+  gridSystem: string;
+  acBreaker: string;
+  batteryBlocksPerString: number;
 }
 
 // ── Parser ──────────────────────────────────────────────────────
@@ -188,12 +200,56 @@ export async function parsePowerCalc(
     }
   }
 
+  // ── Rectifier setup (rows 153-156) ─────────────────────────────
+  const rectifierSetup: PowerCalcRectifierSetup = {
+    isNew: cellStr(ws, "B153").toLowerCase().includes("ny"),
+    model: cellStr(ws, "B154"),
+    minModules: cellNum(ws, "B155"),
+    maxModules: cellNum(ws, "B156"),
+  };
+
+  // ── AC vern sheet (grid system, AC breaker) ─────────────────────
+  let gridSystem = "";
+  let acBreaker = "";
+  const acVernName = wb.SheetNames.find(
+    (n) => n.toLowerCase() === "beregning ac vern",
+  );
+  if (acVernName) {
+    const acWs = wb.Sheets[acVernName];
+    gridSystem = cellStr(acWs, "U1"); // e.g. "IT-230V"
+    acBreaker = cellStr(acWs, "Y6"); // e.g. "3x32A (IT)"
+  }
+
+  // ── Cabinet type (derived from rectifier model or maxPower80W) ──
+  let cabinetType = "";
+  const modelMatch = rectifierSetup.model.match(/(\d+)\s*kW/i);
+  if (modelMatch) {
+    cabinetType = `${modelMatch[1]}kW`;
+  } else {
+    // Fallback: derive from total maxPower80W
+    const totalMax80 = inputs.reduce(
+      (sum, inp) => sum + inp.quantity * inp.maxPower80W,
+      0,
+    );
+    if (totalMax80 <= 8000) cabinetType = "8kW";
+    else if (totalMax80 <= 16000) cabinetType = "16kW";
+    else cabinetType = "24kW";
+  }
+
+  // Battery blocks per string is constant for MARATHON 12V: 4 blocks
+  const batteryBlocksPerString = 4;
+
   return {
     siteInfo,
     inputs,
     results,
     energy,
     rectifierTest,
+    rectifierSetup,
     dcCables,
+    cabinetType,
+    gridSystem,
+    acBreaker,
+    batteryBlocksPerString,
   };
 }

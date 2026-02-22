@@ -4,6 +4,7 @@ from pathlib import Path
 
 from docx import Document
 from docx.oxml.ns import qn
+from docx.shared import Cm, Pt
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
@@ -11,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
+from app.models.photo import ProjectPhoto
 from app.models.project import Project
 from app.models.tssr import ProjectTSSR
 from app.schemas.tssr import TSSRInput
@@ -71,12 +73,14 @@ async def update_tssr(
 async def export_tssr(
     project_id: uuid.UUID,
     format: str = Query("legacy", alias="format"),
+    as_built: bool = Query(False, alias="as_built"),
     db: AsyncSession = Depends(get_db),
 ):
     """Export TSSR as filled .docx.
 
     Query params:
         format: "legacy" (fill original OneCo template) or "modern" (generate new template)
+        as_built: if true, generates as-built variant with deviations and as-built photos
     """
     # Get project info
     proj_result = await db.execute(select(Project).where(Project.id == project_id))
@@ -92,13 +96,53 @@ async def export_tssr(
     if not tssr:
         raise HTTPException(404, "TSSR not found for this project")
 
+    # Get project photos for embedding — planning phase for regular, both for as-built
+    photo_query = (
+        select(ProjectPhoto)
+        .where(ProjectPhoto.project_id == project_id)
+        .where(ProjectPhoto.section != "unsorted")
+        .order_by(ProjectPhoto.section, ProjectPhoto.sort_order)
+    )
+    if not as_built:
+        photo_query = photo_query.where(ProjectPhoto.phase == "planning")
+    photo_result = await db.execute(photo_query)
+    all_photos = list(photo_result.scalars().all())
+
+    planning_photos = [p for p in all_photos if (p.phase or "planning") == "planning"]
+    as_built_photos = (
+        [p for p in all_photos if p.phase == "as_built"] if as_built else []
+    )
+
+    # Increment as-built version if exporting as-built
+    if as_built:
+        project.as_built_tssr_version += 1
+        await db.commit()
+
     if format == "modern":
-        return _export_modern(tssr, project)
+        return _export_modern(
+            tssr,
+            project,
+            planning_photos,
+            as_built=as_built,
+            as_built_photos=as_built_photos,
+        )
 
-    return _export_legacy(tssr, project)
+    return _export_legacy(
+        tssr,
+        project,
+        planning_photos,
+        as_built=as_built,
+        as_built_photos=as_built_photos,
+    )
 
 
-def _export_modern(tssr: ProjectTSSR, project) -> StreamingResponse:
+def _export_modern(
+    tssr: ProjectTSSR,
+    project,
+    photos: list[ProjectPhoto],
+    as_built: bool = False,
+    as_built_photos: list[ProjectPhoto] | None = None,
+) -> StreamingResponse:
     """Generate a modern TSSR template filled with project data."""
     data = {
         "site_name": tssr.site_name,
@@ -123,7 +167,25 @@ def _export_modern(tssr: ProjectTSSR, project) -> StreamingResponse:
         "tssr_alignment_comments": tssr.tssr_alignment_comments,
     }
     buf = generate_tssr_template(data)
-    filename = f"TSSR_{tssr.site_id or project.site_id or 'export'}_modern.docx"
+
+    # Insert planned works and photos into the generated document
+    if tssr.planned_works or photos or as_built:
+        doc = Document(buf)
+        _insert_planned_works_into_doc(doc, tssr.planned_works)
+        if photos:
+            _insert_photos_into_doc(doc, photos)
+        if as_built:
+            _insert_as_built_section(doc, tssr, as_built_photos or [])
+        buf = io.BytesIO()
+        doc.save(buf)
+        buf.seek(0)
+
+    site_id = tssr.site_id or project.site_id or "export"
+    if as_built:
+        ver = project.as_built_tssr_version
+        filename = f"{site_id}_TSSR_AsBuilt_v{ver:02d}.docx"
+    else:
+        filename = f"TSSR_{site_id}_modern.docx"
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -131,7 +193,13 @@ def _export_modern(tssr: ProjectTSSR, project) -> StreamingResponse:
     )
 
 
-def _export_legacy(tssr: ProjectTSSR, project) -> StreamingResponse:
+def _export_legacy(
+    tssr: ProjectTSSR,
+    project,
+    photos: list[ProjectPhoto],
+    as_built: bool = False,
+    as_built_photos: list[ProjectPhoto] | None = None,
+) -> StreamingResponse:
     """Fill the original OneCo .docx template with project data."""
     # Resolve template path
     template_path = Path(settings.tssr_template_path)
@@ -187,12 +255,28 @@ def _export_legacy(tssr: ProjectTSSR, project) -> StreamingResponse:
             if table_idx < len(doc.tables):
                 _set_plain_cell(doc.tables[table_idx], row_idx, col_idx, text_value)
 
+    # Insert planned works
+    _insert_planned_works_into_doc(doc, tssr.planned_works)
+
+    # Insert photos
+    if photos:
+        _insert_photos_into_doc(doc, photos)
+
+    # Insert as-built content
+    if as_built:
+        _insert_as_built_section(doc, tssr, as_built_photos or [])
+
     # Save to buffer
     buf = io.BytesIO()
     doc.save(buf)
     buf.seek(0)
 
-    filename = f"TSSR_{tssr.site_id or project.site_id or 'export'}.docx"
+    site_id = tssr.site_id or project.site_id or "export"
+    if as_built:
+        ver = project.as_built_tssr_version
+        filename = f"{site_id}_TSSR_AsBuilt_v{ver:02d}.docx"
+    else:
+        filename = f"TSSR_{site_id}.docx"
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -200,6 +284,264 @@ def _export_legacy(tssr: ProjectTSSR, project) -> StreamingResponse:
             "Content-Disposition": f'attachment; filename="{filename}"',
         },
     )
+
+
+# ── Photo category labels (mirror frontend photo-categories.ts) ──────
+
+PHOTO_SECTION_LABELS = {
+    "site_overview": "§1 — Site Overview",
+    "delivery_access": "§1.1 — Delivery & Access",
+    "hse_illustration": "§1.2 — HSE Illustration",
+    "cable_route": "§3.5 — Cable Route",
+    "power_diagram": "§3.6 — Power Diagram",
+    "radio_plan_screenshot": "§4.3 — Radio Plan Screenshot",
+    "effekt_screenshot": "§4.3 — Effekt Screenshot",
+    "antenna_azimuth": "§5.1 — Antenna Azimuth",
+    "antenna_placement": "§5.2 — Antenna Placement",
+    "equipment_room": "§5.3 — Equipment Room",
+    "site_plan": "§5.4 — Site Plan",
+    "structural_calc": "§5.5 — Structural Calculation",
+    "building_photos": "Appendix — Building Photos",
+    "detail_photos": "Appendix — Detail Photos",
+    "other": "Other Photos",
+}
+
+# Ordered list of sections for export
+PHOTO_SECTION_ORDER = [
+    "site_overview",
+    "delivery_access",
+    "hse_illustration",
+    "cable_route",
+    "power_diagram",
+    "radio_plan_screenshot",
+    "effekt_screenshot",
+    "antenna_azimuth",
+    "antenna_placement",
+    "equipment_room",
+    "site_plan",
+    "structural_calc",
+    "building_photos",
+    "detail_photos",
+    "other",
+]
+
+# Max image width in the document (A4 minus margins ≈ 17cm)
+MAX_IMAGE_WIDTH_CM = 16.0
+
+
+def _render_annotations(image_path: Path, annotations: list) -> io.BytesIO:
+    """Render annotations onto a photo using Pillow, return JPEG buffer."""
+    from PIL import Image, ImageDraw, ImageFont
+
+    img = Image.open(image_path).convert("RGB")
+    draw = ImageDraw.Draw(img)
+
+    # Try to get a font for text annotations
+    try:
+        font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 24)
+    except Exception:
+        font = ImageFont.load_default()
+
+    color_map = {
+        "red": (255, 0, 0),
+        "yellow": (255, 255, 0),
+        "blue": (0, 100, 255),
+        "white": (255, 255, 255),
+        "black": (0, 0, 0),
+    }
+
+    for ann in annotations:
+        ann_type = ann.get("type", "")
+        color = color_map.get(ann.get("color", "red"), (255, 0, 0))
+        points = ann.get("points", [])
+        width = 3
+
+        if ann_type == "arrow" and len(points) >= 2:
+            x1, y1 = points[0]["x"], points[0]["y"]
+            x2, y2 = points[1]["x"], points[1]["y"]
+            draw.line([(x1, y1), (x2, y2)], fill=color, width=width)
+            # Simple arrowhead
+            import math
+
+            angle = math.atan2(y2 - y1, x2 - x1)
+            head_len = 15
+            for offset in [2.5, -2.5]:
+                hx = x2 - head_len * math.cos(angle + offset)
+                hy = y2 - head_len * math.sin(angle + offset)
+                draw.line([(x2, y2), (hx, hy)], fill=color, width=width)
+
+        elif ann_type == "line" and len(points) >= 2:
+            x1, y1 = points[0]["x"], points[0]["y"]
+            x2, y2 = points[1]["x"], points[1]["y"]
+            draw.line([(x1, y1), (x2, y2)], fill=color, width=width)
+
+        elif ann_type == "rectangle" and len(points) >= 2:
+            x1, y1 = points[0]["x"], points[0]["y"]
+            x2, y2 = points[1]["x"], points[1]["y"]
+            draw.rectangle([(x1, y1), (x2, y2)], outline=color, width=width)
+
+        elif ann_type == "circle" and len(points) >= 2:
+            x1, y1 = points[0]["x"], points[0]["y"]
+            x2, y2 = points[1]["x"], points[1]["y"]
+            draw.ellipse([(x1, y1), (x2, y2)], outline=color, width=width)
+
+        elif ann_type == "text" and len(points) >= 1:
+            x, y = points[0]["x"], points[0]["y"]
+            label = ann.get("label", "")
+            if label:
+                draw.text((x, y), label, fill=color, font=font)
+
+        elif ann_type == "measure" and len(points) >= 2:
+            x1, y1 = points[0]["x"], points[0]["y"]
+            x2, y2 = points[1]["x"], points[1]["y"]
+            draw.line([(x1, y1), (x2, y2)], fill=color, width=width)
+            dist = ann.get("measureDistance", "")
+            if dist:
+                mx, my = (x1 + x2) / 2, (y1 + y2) / 2
+                draw.text((mx, my - 12), f"{dist}m", fill=color, font=font)
+
+    buf = io.BytesIO()
+    img.save(buf, "JPEG", quality=90)
+    buf.seek(0)
+    return buf
+
+
+def _insert_planned_works_into_doc(doc: Document, planned_works: dict | None) -> None:
+    """Insert planned works sections into the document after site data tables."""
+    if not planned_works:
+        return
+    sections = planned_works.get("sections", [])
+    if not sections:
+        return
+
+    doc.add_page_break()
+    heading = doc.add_heading("Description of Planned Works", level=1)
+    heading.runs[0].font.size = Pt(16)
+
+    for sec in sections:
+        title = sec.get("title", "")
+        items = sec.get("items", [])
+        if not title or not items:
+            continue
+
+        doc.add_heading(title, level=2)
+
+        for item in items:
+            text = item.get("text", "").strip()
+            # For manual-field-only items, compose text from fields
+            if not text:
+                fields = item.get("manualFields", [])
+                parts = []
+                for f in fields:
+                    val = f.get("value", "").strip()
+                    if val:
+                        label = f.get("label", "")
+                        parts.append(f"{label}: {val}" if label else val)
+                text = "; ".join(parts)
+            if not text:
+                continue
+
+            para = doc.add_paragraph(style="List Bullet")
+            run = para.add_run(text)
+            run.font.size = Pt(10)
+
+            # Add derivation as small italic note
+            derivation = item.get("derivation", "")
+            if derivation:
+                note_run = para.add_run(f"  [{derivation}]")
+                note_run.font.size = Pt(8)
+                note_run.font.italic = True
+                note_run.font.color.rgb = None  # gray doesn't work without RGBColor
+
+
+def _insert_photos_into_doc(doc: Document, photos: list[ProjectPhoto]) -> None:
+    """Insert photos grouped by TSSR section at the end of the document."""
+    uploads_root = Path(settings.uploads_dir)
+
+    # Group photos by section in defined order
+    by_section: dict[str, list[ProjectPhoto]] = {}
+    for photo in photos:
+        section = photo.section or "other"
+        by_section.setdefault(section, []).append(photo)
+
+    # Add page break before photo appendix
+    doc.add_page_break()
+
+    # Section heading
+    heading = doc.add_heading("Photo Documentation", level=1)
+    heading.runs[0].font.size = Pt(16)
+
+    for section_key in PHOTO_SECTION_ORDER:
+        section_photos = by_section.get(section_key)
+        if not section_photos:
+            continue
+
+        label = PHOTO_SECTION_LABELS.get(section_key, section_key)
+        doc.add_heading(label, level=2)
+
+        for photo in section_photos:
+            file_path = uploads_root / photo.file_path
+            if not file_path.exists():
+                continue
+
+            # Render annotations onto image if present
+            annotations = photo.annotations or []
+            if annotations and isinstance(annotations, list) and len(annotations) > 0:
+                try:
+                    img_buf = _render_annotations(file_path, annotations)
+                    doc.add_picture(img_buf, width=Cm(MAX_IMAGE_WIDTH_CM))
+                except Exception as e:
+                    print(
+                        f"Failed to render annotations for {photo.original_filename}: {e}"
+                    )
+                    doc.add_picture(str(file_path), width=Cm(MAX_IMAGE_WIDTH_CM))
+            else:
+                try:
+                    doc.add_picture(str(file_path), width=Cm(MAX_IMAGE_WIDTH_CM))
+                except Exception as e:
+                    print(f"Failed to insert photo {photo.original_filename}: {e}")
+                    continue
+
+            # Caption
+            caption_text = photo.auto_filename or photo.original_filename
+            if photo.caption:
+                caption_text += f" — {photo.caption}"
+            caption_para = doc.add_paragraph()
+            run = caption_para.add_run(caption_text)
+            run.font.size = Pt(9)
+            run.font.italic = True
+            caption_para.paragraph_format.space_after = Pt(12)
+
+
+def _insert_as_built_section(
+    doc: Document, tssr: ProjectTSSR, as_built_photos: list[ProjectPhoto]
+) -> None:
+    """Insert as-built documentation: title label, deviations, and as-built photos."""
+    from datetime import date
+
+    doc.add_page_break()
+
+    # As-Built heading
+    heading = doc.add_heading("AS-BUILT DOCUMENTATION", level=1)
+    heading.runs[0].font.size = Pt(16)
+
+    # Date
+    para = doc.add_paragraph()
+    run = para.add_run(f"As-Built Date: {date.today().strftime('%d.%m.%Y')}")
+    run.font.size = Pt(10)
+
+    # Deviations free text
+    deviations_text = tssr.deviations_free_text
+    if deviations_text:
+        doc.add_heading("Deviation Notes", level=2)
+        para = doc.add_paragraph()
+        run = para.add_run(deviations_text)
+        run.font.size = Pt(10)
+
+    # As-built photos
+    if as_built_photos:
+        doc.add_heading("As-Built Photo Documentation", level=2)
+        _insert_photos_into_doc(doc, as_built_photos)
 
 
 def _set_sdt_value(sdt_element, value: str) -> None:
@@ -338,6 +680,8 @@ def _tssr_to_dict(tssr: ProjectTSSR) -> dict:
         "paintingColor": tssr.painting_color,
         # Revision History
         "revisionHistory": tssr.revision_history or [],
+        # Planned Works
+        "plannedWorks": tssr.planned_works,
         # Other
         "additionalNotes": tssr.additional_notes,
     }

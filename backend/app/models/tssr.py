@@ -82,6 +82,12 @@ class ProjectTSSR(Base, TimestampMixin):
     # Revision History
     revision_history: Mapped[list] = mapped_column(JSONB, default=list)
 
+    # Planned Works (JSONB — entire PlannedWorksState from frontend)
+    planned_works: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+    # As-built deviations
+    deviations_free_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     # Other
     additional_notes: Mapped[str] = mapped_column(Text, default="")
 

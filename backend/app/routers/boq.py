@@ -136,9 +136,14 @@ async def update_boq_item(
     if not item:
         raise HTTPException(404, "BOQ item not found")
 
-    item.quantity = body.quantity
-    item.is_manual_override = body.is_manual_override
-    item.override_note = body.override_note
+    if body.quantity is not None:
+        item.quantity = body.quantity
+        item.is_manual_override = body.is_manual_override
+        item.override_note = body.override_note
+    if body.actual_quantity is not None:
+        item.actual_quantity = body.actual_quantity
+    if body.actual_comment is not None:
+        item.actual_comment = body.actual_comment
     await db.commit()
     await db.refresh(item)
     return item
@@ -168,6 +173,8 @@ async def remove_boq_item(
 @router.get("/export")
 async def export_boq(
     project_id: uuid.UUID,
+    format: str = "xlsm",
+    as_built: bool = Query(False, alias="as_built"),
     db: AsyncSession = Depends(get_db),
 ):
     """Export project BOQ by copying the template and filling in quantities.
@@ -198,21 +205,30 @@ async def export_boq(
     )
     items = result.unique().scalars().all()
 
-    # Build a lookup: (sheet_name, row_index) -> quantity
+    # Build lookups: (sheet_name, row_index) -> quantity / actuals
     qty_map: dict[tuple[str, int], float] = {}
+    act_map: dict[tuple[str, int], tuple[float | None, str | None]] = {}
     for item in items:
         cat = item.catalog_item
         if cat and cat.sheet_name and cat.row_index:
             qty_map[(cat.sheet_name, cat.row_index)] = item.quantity
+            if item.actual_quantity is not None or item.actual_comment:
+                act_map[(cat.sheet_name, cat.row_index)] = (
+                    item.actual_quantity,
+                    item.actual_comment,
+                )
 
-    # Load template with VBA macros preserved
-    wb = openpyxl.load_workbook(str(template_path), keep_vba=True)
+    # Load template — preserve VBA for .xlsm output
+    wb = openpyxl.load_workbook(str(template_path), keep_vba=(format != "xlsx"))
 
     # Sheets to fill metadata + quantities
+    DATA_SHEETS = ("BoQ", "BoM Griptel", "BoM Solar")
     COL_D_QUANTITY = 4  # Column D = Quantity
+    COL_F_ACT_QTY = 6  # Column F = ACT_Qty
+    COL_G_ACT_COMMENT = 7  # Column G = ACT_Comment
 
     for sheet_name in wb.sheetnames:
-        if sheet_name not in ("BoQ", "BoM Griptel", "BoM Solar"):
+        if sheet_name not in DATA_SHEETS:
             continue
         ws = wb[sheet_name]
 
@@ -225,16 +241,40 @@ async def export_boq(
             if sname == sheet_name and qty > 0:
                 ws.cell(row=row_idx, column=COL_D_QUANTITY, value=qty)
 
+        # Fill actuals (columns F and G) where set
+        for (sname, row_idx), (act_qty, act_comment) in act_map.items():
+            if sname == sheet_name:
+                if act_qty is not None:
+                    ws.cell(row=row_idx, column=COL_F_ACT_QTY, value=act_qty)
+                if act_comment:
+                    ws.cell(row=row_idx, column=COL_G_ACT_COMMENT, value=act_comment)
+
     # Save to in-memory buffer
+    # When format=xlsx, the workbook was loaded with keep_vba=False which
+    # strips VBA macros but preserves all formatting, Tables, data validation, etc.
     buf = io.BytesIO()
     wb.save(buf)
     wb.close()
     buf.seek(0)
 
-    filename = f"BoQ_{project.site_id or 'export'}.xlsm"
+    if format == "xlsx":
+        ext = "xlsx"
+        mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    else:
+        ext = "xlsm"
+        mime = "application/vnd.ms-excel.sheet.macroEnabled.12"
+
+    # Increment as-built version if applicable
+    if as_built:
+        project.as_built_boq_version += 1
+        await db.commit()
+        ver = project.as_built_boq_version
+        filename = f"{project.site_id or 'export'}_BOQ_AsBuilt_v{ver:02d}.{ext}"
+    else:
+        filename = f"BoQ_{project.site_id or 'export'}.{ext}"
     return StreamingResponse(
         buf,
-        media_type="application/vnd.ms-excel.sheet.macroEnabled.12",
+        media_type=mime,
         headers={
             "Content-Disposition": f'attachment; filename="{filename}"',
         },

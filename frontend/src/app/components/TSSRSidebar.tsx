@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { ScrollArea } from "./ui/scroll-area";
 import {
   ChevronRight,
@@ -12,8 +12,11 @@ import {
   Zap,
   Cable,
   ClipboardList,
+  FileSpreadsheet,
+  FileWarning,
 } from "lucide-react";
 import { useSiteContext } from "../context/SiteContext";
+import { useWorkflowContext } from "../context/WorkflowContext";
 import {
   NAV_TREE,
   SectionId,
@@ -30,6 +33,8 @@ const ICON_MAP: Record<string, React.FC<{ className?: string }>> = {
   Zap,
   Cable,
   ClipboardList,
+  FileSpreadsheet,
+  FileWarning,
 };
 
 interface TSSRSidebarProps {
@@ -78,6 +83,17 @@ export const TSSRSidebar: React.FC<TSSRSidebarProps> = ({
   onSectionChange,
 }) => {
   const { tssrData } = useSiteContext();
+  const { isAtLeastStatus } = useWorkflowContext();
+
+  // Filter nav tree: hide as-built group unless status >= building
+  const visibleNavTree = useMemo(
+    () =>
+      NAV_TREE.filter(
+        (group) => group.id !== "as-built" || isAtLeastStatus("building"),
+      ),
+    [isAtLeastStatus],
+  );
+
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
     new Set(NAV_TREE.map((g) => g.id)),
   );
@@ -103,7 +119,7 @@ export const TSSRSidebar: React.FC<TSSRSidebarProps> = ({
       {/* Navigation tree */}
       <ScrollArea className="flex-1">
         <div className="py-0">
-          {NAV_TREE.map((group) => {
+          {visibleNavTree.map((group) => {
             const isExpanded = expandedGroups.has(group.id);
 
             return (
